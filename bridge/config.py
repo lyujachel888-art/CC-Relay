@@ -8,7 +8,6 @@ class Config:
     app_id: str
     app_secret: str
     user_open_id: str
-    tmux_session: str = "cc1"
 
 
 def load_config() -> Config:
@@ -17,5 +16,4 @@ def load_config() -> Config:
         app_id=os.environ["FEISHU_APP_ID"],
         app_secret=os.environ["FEISHU_APP_SECRET"],
         user_open_id=os.environ["FEISHU_USER_OPEN_ID"],
-        tmux_session=os.environ.get("TMUX_SESSION", "cc1"),
     )

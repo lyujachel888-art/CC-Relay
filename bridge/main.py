@@ -17,8 +17,7 @@ def main() -> None:
     log = logging.getLogger("bridge.main")
 
     cfg = load_config()
-    log.info("loaded config: app_id=%s tmux_session=%s open_id=%s",
-             cfg.app_id, cfg.tmux_session, cfg.user_open_id)
+    log.info("loaded config: app_id=%s open_id=%s", cfg.app_id, cfg.user_open_id)
 
     feishu = FeishuClient(cfg.app_id, cfg.app_secret, cfg.user_open_id)
     app = create_app(feishu)
@@ -26,7 +25,7 @@ def main() -> None:
     # Long-conn runs in background thread; FastAPI runs in main thread
     ws_thread = threading.Thread(
         target=start_ws_client,
-        args=(cfg.app_id, cfg.app_secret, cfg.tmux_session),
+        args=(cfg.app_id, cfg.app_secret),
         daemon=True,
         name="lark-ws",
     )

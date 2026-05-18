@@ -4,13 +4,13 @@ from typing import Callable
 
 import lark_oapi as lark
 
-from injector import inject_to_tmux
+from injector import inject
 
 log = logging.getLogger("bridge.long_conn")
 
 
-def make_message_handler(tmux_session: str) -> Callable:
-    """Build a handler that injects incoming Feishu messages into a tmux session."""
+def make_message_handler() -> Callable:
+    """Build a handler that injects incoming Feishu messages into the wrapper PTY."""
 
     def handler(data) -> None:
         try:
@@ -36,16 +36,16 @@ def make_message_handler(tmux_session: str) -> Callable:
             return
 
         try:
-            inject_to_tmux(tmux_session, text)
+            inject(text)
         except Exception as e:
-            log.exception("tmux injection failed: %s", e)
+            log.exception("injection failed: %s", e)
 
     return handler
 
 
-def start_ws_client(app_id: str, app_secret: str, tmux_session: str) -> None:
+def start_ws_client(app_id: str, app_secret: str) -> None:
     """Block on lark WebSocket client. Run in a background thread."""
-    handler = make_message_handler(tmux_session)
+    handler = make_message_handler()
 
     event_handler = (
         lark.EventDispatcherHandler.builder("", "")
