@@ -16,3 +16,7 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# Wrapper logs
+wrapper/wrapper.log
+wrapper/spike_output_*.log
