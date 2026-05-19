@@ -1,0 +1,32 @@
+"""Shared-secret bootstrap so only our hook script can POST to /hook/*.
+
+The bridge generates a random token on first run and writes it to a known
+location inside hooks/. post_hook.py reads the same file and sends it as
+`Authorization: Bearer <token>`. server.py enforces presence on every
+/hook/* endpoint."""
+
+import secrets
+from pathlib import Path
+
+# Same path the WSL bridge and the Windows hook can both reach.
+TOKEN_PATH_WSL = Path("/mnt/e/MyProject/RC/hooks/.bridge_token")
+
+HEADER_NAME = "Authorization"
+HEADER_PREFIX = "Bearer "
+
+
+def ensure_token() -> str:
+    """Read the persistent token, or generate-and-write one if missing."""
+    if TOKEN_PATH_WSL.exists():
+        existing = TOKEN_PATH_WSL.read_text(encoding="utf-8").strip()
+        if existing:
+            return existing
+    token = secrets.token_urlsafe(32)
+    TOKEN_PATH_WSL.parent.mkdir(parents=True, exist_ok=True)
+    TOKEN_PATH_WSL.write_text(token, encoding="utf-8")
+    # 0600 — best-effort; ignored on filesystems that don't support it.
+    try:
+        TOKEN_PATH_WSL.chmod(0o600)
+    except Exception:
+        pass
+    return token

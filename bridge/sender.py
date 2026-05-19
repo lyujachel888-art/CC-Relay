@@ -36,3 +36,16 @@ def resolve_to_wsl(user_path: str) -> Optional[Path]:
         return Path(p)
     # Relative to project root
     return PROJECT_ROOT_WSL / p
+
+
+def is_within_project(path: Path) -> bool:
+    """True iff `path`, after resolving symlinks / `..`, sits under the project
+    root. Used as the only allow-list for "传 X" — anything outside the project
+    (e.g. C:\\Windows\\System32\\... or ~/.ssh) is rejected so a phone client
+    can't exfiltrate arbitrary files."""
+    try:
+        resolved = path.resolve(strict=False)
+        resolved.relative_to(PROJECT_ROOT_WSL.resolve())
+        return True
+    except (ValueError, OSError):
+        return False

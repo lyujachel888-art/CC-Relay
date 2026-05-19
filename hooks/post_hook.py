@@ -21,6 +21,14 @@ BRIDGE_BASE = "http://127.0.0.1:8787"
 # dead bridge must not stall Claude. 1s is enough for a local loopback POST.
 TIMEOUT = 1.0
 LOG_PATH = Path(__file__).resolve().parent / "post_hook.log"
+TOKEN_PATH = Path(__file__).resolve().parent / ".bridge_token"
+
+
+def _read_token() -> str:
+    try:
+        return TOKEN_PATH.read_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
 
 
 def log(line: str) -> None:
@@ -34,9 +42,11 @@ def log(line: str) -> None:
 def post(url: str, text: str) -> None:
     safe = text.encode("utf-8", "replace").decode("utf-8", "replace")
     body = json.dumps({"text": safe}, ensure_ascii=False).encode("utf-8", "replace")
-    req = urllib.request.Request(
-        url, data=body, headers={"Content-Type": "application/json"}, method="POST"
-    )
+    headers = {"Content-Type": "application/json"}
+    token = _read_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
     try:
         resp = urllib.request.urlopen(req, timeout=TIMEOUT)
         log(f"POST {url} ok status={resp.status} text_len={len(safe)}")

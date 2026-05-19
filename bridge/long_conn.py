@@ -9,7 +9,7 @@ from feishu import FeishuClient
 from image_cache import save_file_bytes, save_image_bytes
 from injector import inject
 from menu import build_menu_text, is_trigger, offer_menu, try_consume_choice
-from sender import MAX_BYTES, parse_send_command, resolve_to_wsl
+from sender import MAX_BYTES, is_within_project, parse_send_command, resolve_to_wsl
 
 log = logging.getLogger("bridge.long_conn")
 
@@ -205,6 +205,9 @@ def make_message_handler(feishu: Optional[FeishuClient] = None) -> Callable:
                 return
             if not wsl_path.is_file():
                 reply_hint(f"⚠️ 不是文件: {send_target}")
+                return
+            if not is_within_project(wsl_path):
+                reply_hint(f"⛔ 拒绝: 路径在工程目录之外 ({wsl_path})")
                 return
             size = wsl_path.stat().st_size
             if size > MAX_BYTES:

@@ -26,3 +26,6 @@ wrapper/spike_output_*.log
 
 # post_hook log
 hooks/post_hook.log
+
+# bridge↔hook shared secret (auto-generated)
+hooks/.bridge_token
