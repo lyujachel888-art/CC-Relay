@@ -3,6 +3,7 @@
 import ctypes
 import logging
 import os
+import shutil
 import socket
 import sys
 import threading
@@ -10,6 +11,31 @@ import time
 from pathlib import Path
 
 from winpty import PtyProcess
+
+
+def current_term_size() -> tuple:
+    """Return (rows, cols) of the current terminal, with a sane fallback."""
+    try:
+        s = shutil.get_terminal_size(fallback=(140, 40))
+        return (s.lines, s.columns)
+    except Exception:
+        return (40, 140)
+
+
+def resize_watcher(proc: PtyProcess, stop_event: threading.Event):
+    """Poll the host terminal size and propagate changes to the child PTY.
+    Windows has no SIGWINCH so polling is the only option."""
+    last = current_term_size()
+    while not stop_event.is_set() and proc.isalive():
+        time.sleep(1.0)
+        cur = current_term_size()
+        if cur != last:
+            try:
+                proc.setwinsize(*cur)
+                logging.info("resized PTY to rows=%d cols=%d", *cur)
+            except Exception as e:
+                logging.warning("setwinsize err: %s", e)
+            last = cur
 
 
 def set_console_utf8() -> None:
@@ -26,8 +52,6 @@ def set_console_utf8() -> None:
 CLAUDE_EXE = r"C:\Users\Jachel\.local\bin\claude.exe"
 LISTEN_HOST = "127.0.0.1"
 LISTEN_PORT = 8788
-PTY_COLS = 140
-PTY_ROWS = 40
 LOG_FILE = Path(__file__).parent / "wrapper.log"
 
 
@@ -69,6 +93,9 @@ def stdin_to_pty(proc: PtyProcess, stop_event: threading.Event):
             except Exception as e:
                 logging.warning("stdin read err: %s", e)
                 break
+            # Diagnostic for Enter/Ctrl issues: log control chars (codepoint < 0x20)
+            if ord(ch) < 0x20:
+                logging.info("kbd ctrl: U+%04X", ord(ch))
             try:
                 proc.write(ch)
             except Exception as e:
@@ -165,8 +192,9 @@ def main():
     # claude.exe starts — this switches the child console's input/output code
     # page to UTF-8, so wrapper-injected UTF-8 bytes are decoded correctly.
     cmd = ["cmd", "/c", f"chcp 65001 >nul && {CLAUDE_EXE}"]
-    logging.info("spawn cmdline=%r", cmd)
-    proc = PtyProcess.spawn(cmd, dimensions=(PTY_ROWS, PTY_COLS), cwd=project_root)
+    rows, cols = current_term_size()
+    logging.info("spawn cmdline=%r initial size rows=%d cols=%d", cmd, rows, cols)
+    proc = PtyProcess.spawn(cmd, dimensions=(rows, cols), cwd=project_root)
     logging.info("spawned claude (via cmd /c chcp 65001) pid=%s cwd=%s", proc.pid, project_root)
 
     stop_event = threading.Event()
@@ -175,6 +203,7 @@ def main():
         threading.Thread(target=stdin_to_pty,  name="stdin-in", args=(proc, stop_event), daemon=True),
         threading.Thread(target=socket_to_pty, name="sock-in", args=(proc, stop_event), daemon=True),
         threading.Thread(target=kick_tui,      name="kick", args=(proc,), daemon=True),
+        threading.Thread(target=resize_watcher, name="resize", args=(proc, stop_event), daemon=True),
     ]
     for t in threads:
         t.start()

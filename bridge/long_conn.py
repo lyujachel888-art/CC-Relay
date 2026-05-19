@@ -4,6 +4,7 @@ from typing import Callable
 
 import lark_oapi as lark
 
+from echo_filter import mark_injected
 from injector import inject
 
 log = logging.getLogger("bridge.long_conn")
@@ -35,6 +36,9 @@ def make_message_handler() -> Callable:
         if not text:
             return
 
+        # Mark before injecting so the racing UserPromptSubmit hook (which
+        # POSTs back here within ~100ms) will find it and suppress the echo.
+        mark_injected(text)
         try:
             inject(text)
         except Exception as e:

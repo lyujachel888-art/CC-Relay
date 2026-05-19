@@ -77,29 +77,46 @@ def summarize_tool(tool_name: str, tool_input: dict) -> str:
     return ""
 
 
-def extract_last_assistant_text(transcript_path: Path) -> str:
-    """Walk JSONL from the end, return the most recent assistant message text."""
+def extract_stop_summary(transcript_path: Path) -> tuple:
+    """Walk JSONL from the end. Returns (last_text, output_tokens, duration_ms).
+
+    - last_text: text of the most recent assistant message
+    - output_tokens: output_tokens of that same assistant message
+    - duration_ms: durationMs from the most recent system/turn_duration record
+    """
     try:
         lines = transcript_path.read_text(encoding="utf-8").splitlines()
     except Exception:
-        return ""
+        return ("", 0, 0)
+
+    last_text = ""
+    output_tokens = 0
+    duration_ms = 0
+
     for line in reversed(lines):
         try:
             obj = json.loads(line)
         except Exception:
             continue
-        msg = obj.get("message") or {}
-        if msg.get("role") != "assistant":
-            continue
-        content = msg.get("content")
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
-            text = "\n".join(p for p in parts if p)
-            if text:
-                return text
-    return ""
+
+        if duration_ms == 0 and obj.get("type") == "system" and obj.get("subtype") == "turn_duration":
+            duration_ms = int(obj.get("durationMs") or 0)
+
+        if not last_text:
+            msg = obj.get("message") or {}
+            if msg.get("role") == "assistant":
+                output_tokens = int((msg.get("usage") or {}).get("output_tokens") or 0)
+                content = msg.get("content")
+                if isinstance(content, str):
+                    last_text = content
+                elif isinstance(content, list):
+                    parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
+                    last_text = "\n".join(p for p in parts if p)
+
+        if last_text and duration_ms:
+            break
+
+    return (last_text, output_tokens, duration_ms)
 
 
 def main() -> None:
@@ -136,9 +153,16 @@ def main() -> None:
     elif hook_type == "stop":
         tp = data.get("transcript_path") or ""
         if tp:
-            text = extract_last_assistant_text(Path(tp))
+            text, out_tokens, dur_ms = extract_stop_summary(Path(tp))
             if text:
-                post(BRIDGE_BASE + "/hook/assistant_reply", prefix + text)
+                meta = []
+                if dur_ms:
+                    meta.append(f"{dur_ms / 1000:.1f}s")
+                if out_tokens:
+                    meta.append(f"{out_tokens} tok")
+                header = (prefix + f"({' · '.join(meta)})").rstrip() if meta else prefix.rstrip()
+                body = f"{header}\n{text}" if header else text
+                post(BRIDGE_BASE + "/hook/assistant_reply", body)
     elif hook_type == "pre_tool":
         tool_name = data.get("tool_name") or "?"
         summary = summarize_tool(tool_name, data.get("tool_input") or {})
