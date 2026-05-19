@@ -31,7 +31,14 @@ def create_app(feishu: FeishuClient) -> FastAPI:
 
     @app.post("/hook/assistant_reply")
     async def assistant_reply(payload: HookPayload):
-        return _push(feishu, f"🤖 {payload.text}")
+        # Render as a feishu interactive card so markdown (bold, headers,
+        # code blocks, lists, links) actually renders on the phone.
+        # Cards have a ~30KB JSON limit — fall back to plain text if longer.
+        md = f"🤖 {payload.text}"
+        if len(md) > 25000:
+            log.info("assistant_reply too big for card (%d chars), falling back to text", len(md))
+            return _push(feishu, md)
+        return _push_card(feishu, md)
 
     @app.post("/hook/tool_use")
     async def tool_use(payload: HookPayload):
@@ -46,4 +53,13 @@ def _push(feishu: FeishuClient, text: str) -> dict:
         return {"ok": True}
     except Exception as e:
         log.exception("failed to push to feishu: %s", e)
+        return {"ok": False, "error": str(e)}
+
+
+def _push_card(feishu: FeishuClient, md: str) -> dict:
+    try:
+        feishu.send_markdown_card(md)
+        return {"ok": True}
+    except Exception as e:
+        log.exception("failed to push card to feishu: %s", e)
         return {"ok": False, "error": str(e)}
