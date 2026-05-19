@@ -37,4 +37,9 @@ class FeishuClient:
             )
             .build()
         )
-        self._client.im.v1.message.create(req)
+        resp = self._client.im.v1.message.create(req)
+        if not getattr(resp, "success", lambda: True)():
+            code = getattr(resp, "code", "?")
+            msg = getattr(resp, "msg", "?")
+            log_id = getattr(resp, "get_log_id", lambda: "?")()
+            raise RuntimeError(f"feishu send failed code={code} msg={msg} log_id={log_id}")

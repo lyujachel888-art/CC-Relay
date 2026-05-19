@@ -1,5 +1,6 @@
 """Wrapper that runs claude.exe in a ConPTY and accepts external input via TCP socket."""
 
+import ctypes
 import logging
 import os
 import socket
@@ -9,6 +10,18 @@ import time
 from pathlib import Path
 
 from winpty import PtyProcess
+
+
+def set_console_utf8() -> None:
+    """Switch the current process's console code page to UTF-8 (65001) so that
+    text written into the ConPTY is interpreted as UTF-8 (not GBK/cp936) by the
+    child process. Must be called BEFORE spawning the child."""
+    try:
+        k32 = ctypes.windll.kernel32
+        k32.SetConsoleCP(65001)
+        k32.SetConsoleOutputCP(65001)
+    except Exception as e:
+        logging.warning("set_console_utf8 failed: %s", e)
 
 CLAUDE_EXE = r"C:\Users\Jachel\.local\bin\claude.exe"
 LISTEN_HOST = "127.0.0.1"
@@ -83,6 +96,7 @@ def handle_connection(conn: socket.socket, write_func):
     if payload:
         logging.info("inject %d chars: %r", len(payload), payload[:80])
         write_func(payload)
+        time.sleep(0.08)  # let Claude TUI render the input before submitting
         write_func("\r")
         response = b"OK\n"
     else:
@@ -143,8 +157,17 @@ def main():
         sys.stderr.write(f"FATAL: claude.exe not found at {CLAUDE_EXE}\n")
         sys.exit(2)
 
-    proc = PtyProcess.spawn([CLAUDE_EXE], dimensions=(PTY_ROWS, PTY_COLS))
-    logging.info("spawned claude pid=%s", proc.pid)
+    set_console_utf8()
+    logging.info("console codepage set to UTF-8 (65001)")
+
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # Wrap in cmd /c so we can run `chcp 65001` inside the ConPTY before
+    # claude.exe starts — this switches the child console's input/output code
+    # page to UTF-8, so wrapper-injected UTF-8 bytes are decoded correctly.
+    cmd = ["cmd", "/c", f"chcp 65001 >nul && {CLAUDE_EXE}"]
+    logging.info("spawn cmdline=%r", cmd)
+    proc = PtyProcess.spawn(cmd, dimensions=(PTY_ROWS, PTY_COLS), cwd=project_root)
+    logging.info("spawned claude (via cmd /c chcp 65001) pid=%s cwd=%s", proc.pid, project_root)
 
     stop_event = threading.Event()
     threads = [
