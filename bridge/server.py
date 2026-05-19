@@ -21,6 +21,10 @@ def create_app(feishu: FeishuClient) -> FastAPI:
     async def assistant_reply(payload: HookPayload):
         return _push(feishu, f"🤖 {payload.text}")
 
+    @app.post("/hook/tool_use")
+    async def tool_use(payload: HookPayload):
+        return _push(feishu, f"🛠️ {payload.text}")
+
     return app
 
 
