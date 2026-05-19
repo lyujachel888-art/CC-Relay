@@ -82,27 +82,69 @@ def pty_to_stdout(proc: PtyProcess, stop_event: threading.Event):
     logging.info("pty_to_stdout exiting")
 
 
+# When msvcrt.getwch() reads an arrow/function key on Windows it returns a
+# 2-char sequence: a prefix (\x00 or \xe0) followed by a scan code char.
+# Claude's TUI (Node.js Ink) expects POSIX-style ANSI escape sequences, so
+# we translate the most common ones here.
+_EXTENDED_PREFIXES = ("\x00", "\xe0")
+_EXT_KEY_MAP = {
+    "H": "\x1b[A",   # Up
+    "P": "\x1b[B",   # Down
+    "M": "\x1b[C",   # Right
+    "K": "\x1b[D",   # Left
+    "G": "\x1b[H",   # Home
+    "O": "\x1b[F",   # End
+    "I": "\x1b[5~",  # PageUp
+    "Q": "\x1b[6~",  # PageDown
+    "S": "\x1b[3~",  # Delete (forward delete, not Backspace)
+    "R": "\x1b[2~",  # Insert
+}
+
+
 def stdin_to_pty(proc: PtyProcess, stop_event: threading.Event):
-    """Read raw bytes from stdin (one byte at a time) and forward to PTY.
-    On Windows, use msvcrt.getwch() / getch() for raw char input."""
+    """Read keystrokes from the wrapper's stdin and forward to the child PTY.
+    Uses msvcrt.getwch() which blocks until a key is pressed — no polling
+    overhead, no input latency."""
     import msvcrt
     while not stop_event.is_set() and proc.isalive():
-        if msvcrt.kbhit():
+        try:
+            ch = msvcrt.getwch()  # blocks until next key
+        except Exception as e:
+            logging.warning("stdin read err: %s", e)
+            break
+
+        # Extended key sequence (arrows, Home/End, PageUp/Down, Delete, F1-F12 …)
+        if ch in _EXTENDED_PREFIXES:
             try:
-                ch = msvcrt.getwch()  # returns a unicode char
+                scan = msvcrt.getwch()
             except Exception as e:
-                logging.warning("stdin read err: %s", e)
+                logging.warning("extended-key read err: %s", e)
                 break
-            # Diagnostic for Enter/Ctrl issues: log control chars (codepoint < 0x20)
-            if ord(ch) < 0x20:
-                logging.info("kbd ctrl: U+%04X", ord(ch))
+            mapped = _EXT_KEY_MAP.get(scan)
+            if mapped is None:
+                logging.info("unmapped ext key: prefix=U+%04X scan=%r", ord(ch), scan)
+                continue
+            logging.info("ext key %r -> %r", scan, mapped)
             try:
-                proc.write(ch)
+                proc.write(mapped)
             except Exception as e:
                 logging.warning("PTY write err: %s", e)
                 break
-        else:
-            time.sleep(0.01)
+            continue
+
+        # Windows console returns Backspace as \x08 (BS), but Claude's TUI
+        # (Node.js Ink + readline, modeled on POSIX) expects \x7f (DEL).
+        if ch == "\x08":
+            ch = "\x7f"
+
+        if ord(ch) < 0x20 or ord(ch) == 0x7f:
+            logging.info("kbd ctrl: U+%04X", ord(ch))
+
+        try:
+            proc.write(ch)
+        except Exception as e:
+            logging.warning("PTY write err: %s", e)
+            break
     stop_event.set()
     logging.info("stdin_to_pty exiting")
 
