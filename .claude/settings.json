@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python hooks/post_hook.py user_prompt"
+            "command": "python $CLAUDE_PROJECT_DIR/hooks/post_hook.py user_prompt"
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python hooks/post_hook.py stop"
+            "command": "python $CLAUDE_PROJECT_DIR/hooks/post_hook.py stop"
           }
         ]
       }
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python hooks/post_hook.py pre_tool"
+            "command": "python $CLAUDE_PROJECT_DIR/hooks/post_hook.py pre_tool"
           }
         ]
       }
