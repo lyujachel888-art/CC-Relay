@@ -22,10 +22,11 @@ def main() -> None:
     feishu = FeishuClient(cfg.app_id, cfg.app_secret, cfg.user_open_id)
     app = create_app(feishu)
 
-    # Long-conn runs in background thread; FastAPI runs in main thread
+    # Long-conn runs in background thread; FastAPI runs in main thread.
+    # feishu is passed so non-text messages can be answered with a hint.
     ws_thread = threading.Thread(
         target=start_ws_client,
-        args=(cfg.app_id, cfg.app_secret),
+        args=(cfg.app_id, cfg.app_secret, feishu),
         daemon=True,
         name="lark-ws",
     )

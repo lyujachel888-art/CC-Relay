@@ -20,3 +20,9 @@ Thumbs.db
 # Wrapper logs
 wrapper/wrapper.log
 wrapper/spike_output_*.log
+
+# Feishu downloaded images
+.feishu-cache/
+
+# post_hook log
+hooks/post_hook.log
