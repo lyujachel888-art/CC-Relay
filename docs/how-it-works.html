@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>cc-feishu-bridge — 它是怎么工作的</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+         max-width: 920px; margin: 40px auto; padding: 0 20px;
+         color: #222; line-height: 1.7; background: #fafafa; }
+  h1 { color: #1a73e8; border-bottom: 2px solid #1a73e8; padding-bottom: 8px; }
+  h2 { color: #d93025; margin-top: 36px; }
+  h3 { color: #188038; margin-top: 24px; }
+  code, pre { font-family: "Consolas", "Cascadia Code", monospace; }
+  pre { background: #1e1e1e; color: #d4d4d4; padding: 16px; border-radius: 6px;
+        overflow-x: auto; line-height: 1.4; }
+  .box { border: 1px solid #ddd; background: #fff; padding: 16px 20px;
+         border-radius: 8px; margin: 16px 0; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+  .flow { background: #fff7e0; border-left: 4px solid #f9ab00;
+          padding: 12px 16px; margin: 12px 0; border-radius: 4px; }
+  .tip { background: #e8f0fe; border-left: 4px solid #1a73e8;
+         padding: 12px 16px; margin: 12px 0; border-radius: 4px; }
+  .warn { background: #fce8e6; border-left: 4px solid #d93025;
+          padding: 12px 16px; margin: 12px 0; border-radius: 4px; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+  th, td { border: 1px solid #ddd; padding: 8px 12px; text-align: left; }
+  th { background: #f4f4f4; }
+  .label { display: inline-block; padding: 2px 8px; border-radius: 4px;
+           font-size: 12px; font-weight: 600; }
+  .l-bridge   { background: #fff3e0; color: #e65100; }
+  .l-wrapper  { background: #e1f5fe; color: #01579b; }
+  .l-claude   { background: #f3e5f5; color: #4a148c; }
+  .l-feishu   { background: #e8f5e9; color: #1b5e20; }
+  .arrow { color: #999; }
+</style>
+</head>
+<body>
+
+<h1>🌉 cc-feishu-bridge 是怎么工作的</h1>
+
+<p>简单说：让你在 <b>手机飞书</b> 和 <b>电脑 Claude Code 终端</b> 之间双向通讯
+——你打的字会出现在手机上，手机回的话会让 Claude 接着干活。</p>
+
+<h2>三个角色，住在哪</h2>
+
+<table>
+<tr><th>名字</th><th>住处</th><th>干嘛的</th></tr>
+<tr><td><span class="label l-bridge">bridge</span></td>
+    <td>WSL1 Linux（Python）</td>
+    <td>中枢。一头接飞书 API，一头接 wrapper</td></tr>
+<tr><td><span class="label l-wrapper">wrapper</span></td>
+    <td>Windows（Python + ConPTY）</td>
+    <td>把 Claude TUI 包在一个伪终端里，留个 socket 让 bridge 注字符进去</td></tr>
+<tr><td><span class="label l-claude">Claude</span></td>
+    <td>Windows 原生 claude.exe</td>
+    <td>就是 Claude Code 本体，不知道自己被包了</td></tr>
+<tr><td><span class="label l-feishu">飞书</span></td>
+    <td>云端 + 你的手机</td>
+    <td>消息进出口</td></tr>
+</table>
+
+<h2>路径 ①：你在终端打字 → 手机收到推送（出站）</h2>
+
+<p>这条路径 <b>不需要 wrapper</b>。任何 Claude Code 会话只要项目根有
+<code>.claude/settings.json</code>（注册了 hooks）就自动生效。</p>
+
+<div class="flow">
+<pre>
+你在终端打 "看看 README"  ↵
+   ↓
+<span class="label l-claude">Claude</span> 触发 UserPromptSubmit hook
+   ↓
+   hook 是 .claude/settings.json 里配的一行：
+       python hooks/post_hook.py user_prompt
+   ↓
+post_hook.py 读 stdin 拿到 prompt
+   ↓ HTTP POST  /hook/user_prompt
+<span class="label l-bridge">bridge</span> server.py 收到
+   ↓ 调 lark_oapi
+飞书 API
+   ↓
+🔔 你的手机：🧑 [RC] 看看 README
+
+——————— Claude 回复完后 ———————
+
+<span class="label l-claude">Claude</span> 触发 Stop hook
+   ↓
+post_hook.py 翻 transcript.jsonl，找最后一条 assistant message
+   + 拿 turn_duration 和 output_tokens
+   ↓ HTTP POST  /hook/assistant_reply
+<span class="label l-bridge">bridge</span>
+   ↓
+🔔 你的手机：🤖 [RC] (15.2s · 1137 tok)
+              这是 Claude 的回复内容...
+</pre>
+</div>
+
+<p>同理，每次 Claude 调工具（Bash / Edit / Read…）也会触发 PreToolUse hook：</p>
+<div class="flow">🔔 🛠️ [RC] Bash: ls /etc<br>🔔 🛠️ [RC] Edit: src/main.py</div>
+
+<h2>路径 ②：你在手机打字 → 终端 Claude 响应（入站）</h2>
+
+<p>这条路径 <b>必须有 wrapper</b>。原因：要把消息送进 Claude 的 stdin，但
+原生 claude.exe 的 stdin 是它自己的 ConPTY，外部进程没法直接写。</p>
+
+<p>解决：用 wrapper.py 启动 Claude，它在中间架一个 ConPTY，留一个 TCP socket
+（127.0.0.1:8788）让 bridge 把字符塞进去。</p>
+
+<div class="flow">
+<pre>
+你的手机 → 飞书 → 飞书云
+                    ↓ WebSocket 长连接
+<span class="label l-bridge">bridge</span> long_conn.py handler 收到 "你好"
+                    ↓
+              echo_filter.mark_injected("你好")
+                    ↓ 这一步是为了等会儿 hook 回来时不要再 🧑 推一遍
+              injector.inject("你好")
+                    ↓ TCP send to 127.0.0.1:8788
+<span class="label l-wrapper">wrapper</span> socket_to_pty 线程收到
+                    ↓ proc.write("你好") + 80ms + proc.write("\r")
+              ConPTY 把字节流交给 Claude（用 UTF-8 codepage 解码）
+                    ↓
+<span class="label l-claude">Claude TUI</span> 看到输入 + Enter，把它当 prompt 提交
+                    ↓
+              再走 路径 ① 那一套 → hook → 飞书
+                    ↓
+              但这一次：bridge 在 /hook/user_prompt 发现
+              "[RC] 你好" 去掉前缀后 = 刚才 mark 过的 "你好"
+                    ↓
+              ✋ 跳过 🧑 推送（避免你看到自己刚发的话）
+
+最后手机只看到：
+   🛠️ [RC] (Claude 调的工具)
+   🤖 [RC] (Xs · Y tok) 你好！有什么我可以帮你的吗？
+</pre>
+</div>
+
+<h2>编码踩坑：为什么 wrapper 启动 Claude 那么复杂</h2>
+
+<p>中文 Windows 控制台默认 codepage 是 <b>936（GBK）</b>。
+wrapper 写 UTF-8 字节给 ConPTY，ConPTY 用 GBK 解码 → Claude 看到乱码。
+所以 wrapper 用 <code>cmd /c "chcp 65001 && claude.exe"</code> 启动 —— 让
+<code>chcp 65001</code> 先把子进程控制台切到 UTF-8，再启动 Claude。</p>
+
+<p>同样，hook 端的 Python 默认按 GBK 读 stdin，Claude 写来的 UTF-8 JSON
+会被解错。所以 post_hook.py 用 <code>sys.stdin.buffer.read()</code> 读
+原始字节，自己按 UTF-8 解码。</p>
+
+<h2>🆕 透明化 shim：模式开关</h2>
+
+<p>正常你输 <code>claude</code> 启动的是原生 claude.exe（只能出站，不能入站）。
+启动 wrapper 需要敲长长一串 <code>.\scripts\launch_claude_wrapper.ps1</code>，麻烦。</p>
+
+<p><b>方案</b>：在你的 PowerShell <code>$PROFILE</code> 里塞一个 <code>claude</code>
+function，按环境变量决定走哪条路：</p>
+
+<table>
+<tr><th>命令</th><th>结果</th></tr>
+<tr><td><code>$env:CLAUDE_BRIDGE = '1'; claude</code></td>
+    <td>→ 走 wrapper，支持双向飞书</td></tr>
+<tr><td><code>$env:CLAUDE_BRIDGE = '0'; claude</code></td>
+    <td>→ 走原生 claude.exe（只出站，不入站）</td></tr>
+<tr><td><code>Enable-ClaudeBridge</code> 然后 <code>claude</code></td>
+    <td>同上，开</td></tr>
+<tr><td><code>Disable-ClaudeBridge</code> 然后 <code>claude</code></td>
+    <td>同上，关</td></tr>
+</table>
+
+<div class="tip"><b>关键点</b>：开关是 <b>每个 PowerShell 窗口独立</b> 的。
+你可以一边开个普通窗口写代码（不被飞书干扰），一边另开一个窗口
+<code>Enable-ClaudeBridge</code> 用手机远程。</div>
+
+<h3>怎么装</h3>
+
+<pre>&amp; "E:\MyProject\RC\scripts\install-claude-shim.ps1"</pre>
+
+<p>装完关掉当前 PowerShell，开新的窗口就能用 <code>Enable-ClaudeBridge</code>。
+脚本只往 <code>$PROFILE</code> 加 5 行（带可识别标记），重复跑不会重复加。</p>
+
+<h2>启动顺序总结</h2>
+
+<ol>
+<li><b>WSL1</b>：跑 <code>bash scripts/launch_bridge.sh</code>（一次跑着就行，长连 + HTTP 都在里面）</li>
+<li><b>Windows PowerShell</b>：开一个普通窗口</li>
+<li>在里面：<code>Enable-ClaudeBridge; claude</code></li>
+<li>手机就能聊了</li>
+</ol>
+
+<h2>关键文件</h2>
+
+<table>
+<tr><th>文件</th><th>说明</th></tr>
+<tr><td><code>bridge/main.py</code></td><td>启动 FastAPI + lark 长连两条腿</td></tr>
+<tr><td><code>bridge/server.py</code></td><td>HTTP 端点：user_prompt / assistant_reply / tool_use</td></tr>
+<tr><td><code>bridge/long_conn.py</code></td><td>lark 长连消息处理 → inject</td></tr>
+<tr><td><code>bridge/injector.py</code></td><td>TCP 客户端，写到 wrapper:8788</td></tr>
+<tr><td><code>bridge/echo_filter.py</code></td><td>30s TTL 记最近 inject 过的消息，给 server 查重</td></tr>
+<tr><td><code>bridge/feishu.py</code></td><td>lark_oapi 包装：send_text 到 open_id</td></tr>
+<tr><td><code>wrapper/wrapper.py</code></td><td>ConPTY 包 claude.exe + 8788 监听</td></tr>
+<tr><td><code>hooks/post_hook.py</code></td><td>三种 hook 类型的处理：user_prompt / stop / pre_tool</td></tr>
+<tr><td><code>.claude/settings.json</code></td><td>项目级 hooks 注册（用相对路径，跨机器友好）</td></tr>
+<tr><td><code>scripts/claude-shim.ps1</code></td><td>PowerShell function，让 <code>claude</code> 可切模式</td></tr>
+</table>
+
+<div class="warn"><b>不要</b>把 <code>bridge/.env</code> 提交到 git ——
+里面有飞书 App Secret 和你的 open_id。</div>
+
+</body>
+</html>
