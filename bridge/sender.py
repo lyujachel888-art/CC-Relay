@@ -4,8 +4,7 @@ the user on feishu."""
 from pathlib import Path
 from typing import Optional
 
-# WSL bridge can see Windows files via /mnt/<drive>/...
-PROJECT_ROOT_WSL = Path("/mnt/e/MyProject/RC")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MAX_BYTES = 30 * 1024 * 1024  # feishu file message hard limit (~30MB)
 
 _TRIGGERS = ("传 ", "传:", "传：", "send ", "上传 ")
@@ -20,32 +19,32 @@ def parse_send_command(text: str) -> Optional[str]:
     return None
 
 
-def resolve_to_wsl(user_path: str) -> Optional[Path]:
-    """Map a Windows-style or relative path the user typed on the phone into
-    a WSL path the bridge can actually open."""
-    p = (user_path or "").strip().strip('"').strip("'").replace("\\", "/")
+def resolve_path(user_path: str) -> Optional[Path]:
+    """Map a path the user typed on the phone into a Windows Path the bridge can open.
+
+    Accepts Windows absolute paths (E:\\... or E:/...) and paths relative to the
+    project root. Forward and back slashes are both accepted.
+    """
+    p = (user_path or "").strip().strip('"').strip("'")
     if not p:
         return None
-    # Windows-style absolute: E:/MyProject/...
-    if len(p) >= 3 and p[1] == ":" and p[2] == "/":
-        drive = p[0].lower()
-        rest = p[3:]
-        return Path(f"/mnt/{drive}/{rest}")
-    # Already WSL absolute
-    if p.startswith("/"):
+    p = p.replace("/", "\\")
+    # Windows absolute path: starts with drive letter + colon
+    if len(p) >= 2 and p[1] == ":":
         return Path(p)
     # Relative to project root
-    return PROJECT_ROOT_WSL / p
+    return PROJECT_ROOT / p
 
 
 def is_within_project(path: Path) -> bool:
-    """True iff `path`, after resolving symlinks / `..`, sits under the project
-    root. Used as the only allow-list for "传 X" — anything outside the project
-    (e.g. C:\\Windows\\System32\\... or ~/.ssh) is rejected so a phone client
-    can't exfiltrate arbitrary files."""
+    """True iff path sits under the project root.
+
+    Security allow-list for "传 X" uploads — rejects anything outside the project
+    (e.g. C:\\Windows\\System32 or user home) so a phone client can't exfiltrate
+    arbitrary files.
+    """
     try:
-        resolved = path.resolve(strict=False)
-        resolved.relative_to(PROJECT_ROOT_WSL.resolve())
+        path.resolve(strict=False).relative_to(PROJECT_ROOT.resolve())
         return True
     except (ValueError, OSError):
         return False

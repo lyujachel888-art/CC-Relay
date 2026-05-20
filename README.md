@@ -27,20 +27,16 @@ CC Relay 将 Claude Code 终端与飞书手机端打通，让你在手机上实�
 
 ```powershell
 # 克隆仓库
-git clone https://github.com/yourname/cc-relay.git
-cd cc-relay
+git clone https://github.com/lyujachel888-art/CC-Relay-.git
+cd CC-Relay-
 
-# 安装 bridge 依赖
+# 安装 bridge 依赖（在 bridge\.venv 内）
 cd bridge
 python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-```
+.venv\Scripts\pip install -r requirements.txt
+cd ..
 
-### Wrapper 依赖
-
-```powershell
-# wrapper 在系统 Python 下运行（不在 venv 内）
+# 安装 wrapper 依赖（系统 Python，需要访问 ConPTY）
 pip install pywinpty
 ```
 
@@ -235,7 +231,7 @@ claude
 
 Bridge 首次启动时自动生成随机 token，写入 `hooks/.bridge_token`（已被 `.gitignore` 排除）。Hook 脚本读取同一文件，用于对 `/hook/*` 端点做 Bearer Token 鉴权，无需手动配置。
 
-> **注意**：`bridge/auth.py` 中的 `TOKEN_PATH_WSL` 硬编码了 WSL 路径 `/mnt/e/MyProject/RC/hooks/.bridge_token`。如果你的项目路径不同，需修改 `bridge/auth.py` 第 12 行中的路径。
+> Token 路径由 `bridge/auth.py` 根据 `__file__` 自动推导，无需手动配置。
 
 ---
 
@@ -247,10 +243,10 @@ Bridge 首次启动时自动生成随机 token，写入 `hooks/.bridge_token`（
 
 ```powershell
 # 终端 1：启动 wrapper（ConPTY 伪终端，托管 Claude Code）
-powershell -File scripts\launch_claude_wrapper.ps1
+powershell -ExecutionPolicy Bypass -File scripts\launch_claude_wrapper.ps1
 
 # 终端 2：启动 bridge（FastAPI + 飞书长连接）
-bash scripts/launch_bridge.sh
+powershell -ExecutionPolicy Bypass -File scripts\launch_bridge.ps1
 ```
 
 启动后飞书会收到一张「🚀 CC Relay 已连接」卡片，点击按钮即可开始使用。

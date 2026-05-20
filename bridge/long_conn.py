@@ -33,7 +33,7 @@ _last_snap_ts = 0.0
 _seen_msg_ids: deque = deque(maxlen=500)
 from menu import MENU_TITLE, build_menu_body, build_menu_text, is_trigger, offer_menu, try_consume_choice
 from push_state import is_tool_use_paused, set_paused
-from sender import MAX_BYTES, is_within_project, parse_send_command, resolve_to_wsl
+from sender import MAX_BYTES, is_within_project, parse_send_command, resolve_path
 
 log = logging.getLogger("bridge.long_conn")
 
@@ -116,23 +116,23 @@ def make_message_handler(feishu: Optional[FeishuClient] = None) -> Callable:
         if feishu is None:
             reply_hint("⚠️ feishu client 未注入，无法上传")
             return
-        wsl_path = resolve_to_wsl(raw_path)
-        if wsl_path is None or not wsl_path.exists():
+        file_path = resolve_path(raw_path)
+        if file_path is None or not file_path.exists():
             reply_hint(f"⚠️ 找不到: {raw_path}")
             return
-        if not wsl_path.is_file():
+        if not file_path.is_file():
             reply_hint(f"⚠️ 不是文件: {raw_path}")
             return
-        if not is_within_project(wsl_path):
-            reply_hint(f"⛔ 拒绝: 路径在工程目录之外 ({wsl_path})")
+        if not is_within_project(file_path):
+            reply_hint(f"⛔ 拒绝: 路径在工程目录之外 ({file_path})")
             return
-        size = wsl_path.stat().st_size
+        size = file_path.stat().st_size
         if size > MAX_BYTES:
             reply_hint(f"⚠️ 文件 {size/1024/1024:.1f}MB 超过 30MB 限制")
             return
         try:
-            feishu.upload_file_and_send(wsl_path)
-            reply_hint(f"📤 已发送 {wsl_path.name} ({size/1024:.1f}KB)")
+            feishu.upload_file_and_send(file_path)
+            reply_hint(f"📤 已发送 {file_path.name} ({size/1024:.1f}KB)")
         except Exception as e:
             log.exception("send file failed")
             reply_hint(f"⚠️ 上传失败: {e}")
