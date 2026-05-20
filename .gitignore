@@ -29,3 +29,13 @@ hooks/post_hook.log
 
 # bridge↔hook shared secret (auto-generated)
 hooks/.bridge_token
+
+# Docs (local dev documentation, not published)
+docs/
+status.html
+
+# Superpowers skills (local AI tooling, not published)
+.superpowers/
+
+# Tauri dev helper (unrelated utility)
+scripts/check_tauri_env.ps1

@@ -1,4 +1,7 @@
-"""Wrapper that runs claude.exe in a ConPTY and accepts external input via TCP socket."""
+"""Wrapper that runs claude.exe in a ConPTY and accepts external input via TCP socket.
+
+:author: jachel.lyu
+"""
 
 import ctypes
 import logging
@@ -48,6 +51,29 @@ def set_console_utf8() -> None:
         k32.SetConsoleOutputCP(65001)
     except Exception as e:
         logging.warning("set_console_utf8 failed: %s", e)
+
+
+# Fixed window title so bridge/screenshot.py can find this console by title.
+CONSOLE_TITLE = "cc-bridge-wrapper"
+
+
+def set_console_title(title: str) -> None:
+    try:
+        ctypes.windll.kernel32.SetConsoleTitleW(title)
+    except Exception as e:
+        logging.warning("SetConsoleTitle failed: %s", e)
+
+
+def title_keeper(title: str, stop_event: threading.Event):
+    """Claude's TUI emits OSC title-set sequences (\\x1b]0;...\\x07) that
+    overwrite our window title — periodically force it back so the bridge's
+    screenshot helper can still find this window by title."""
+    while not stop_event.is_set():
+        time.sleep(0.5)
+        try:
+            ctypes.windll.kernel32.SetConsoleTitleW(title)
+        except Exception:
+            pass
 
 CLAUDE_EXE = r"C:\Users\Jachel\.local\bin\claude.exe"
 LISTEN_HOST = "127.0.0.1"
@@ -229,6 +255,9 @@ def main():
     set_console_utf8()
     logging.info("console codepage set to UTF-8 (65001)")
 
+    set_console_title(CONSOLE_TITLE)
+    logging.info("console title set to %r", CONSOLE_TITLE)
+
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     # Wrap in cmd /c so we can run `chcp 65001` inside the ConPTY before
     # claude.exe starts — this switches the child console's input/output code
@@ -246,6 +275,7 @@ def main():
         threading.Thread(target=socket_to_pty, name="sock-in", args=(proc, stop_event), daemon=True),
         threading.Thread(target=kick_tui,      name="kick", args=(proc,), daemon=True),
         threading.Thread(target=resize_watcher, name="resize", args=(proc, stop_event), daemon=True),
+        threading.Thread(target=title_keeper, name="title", args=(CONSOLE_TITLE, stop_event), daemon=True),
     ]
     for t in threads:
         t.start()

@@ -1,7 +1,10 @@
 """Tracks recently feishu→PTY injected messages so we can suppress the
 UserPromptSubmit echo (Claude TUI re-emits the injected text via the hook,
 which would otherwise show up as a 🧑 push on the phone the user just typed
-on)."""
+on).
+
+:author: jachel.lyu
+"""
 
 import time
 from threading import Lock

@@ -1,0 +1,29 @@
+[project]
+name = "cc-relay"
+version = "0.1.0"
+description = "Claude Code ↔ Feishu 实时双向中继桥"
+authors = [{ name = "jachel.lyu" }]
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+keywords = ["claude-code", "feishu", "lark", "bridge", "ai-dev"]
+
+dependencies = [
+    "fastapi==0.115.0",
+    "uvicorn[standard]==0.32.0",
+    "lark-oapi==1.4.15",
+    "python-dotenv==1.0.1",
+    "pywinpty>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.3",
+    "httpx==0.27.2",
+]
+
+[project.urls]
+Repository = "https://github.com/jachel-lyu/cc-relay"
+
+[tool.pytest.ini_options]
+testpaths = ["bridge/tests"]

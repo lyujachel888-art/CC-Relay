@@ -1,3 +1,8 @@
+"""FastAPI hook server for cc-relay — receives Claude Code hook POSTs and
+forwards them to Feishu as text messages or interactive cards.
+
+:author: jachel.lyu
+"""
 import hmac
 import logging
 import re
@@ -5,9 +10,12 @@ import re
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
+import files_tracker
 from auth import HEADER_PREFIX
 from echo_filter import claim_echo
 from feishu import FeishuClient
+from history import remember as remember_transcript
+from push_state import is_tool_use_paused
 
 log = logging.getLogger("bridge.server")
 
@@ -18,6 +26,9 @@ _PROJECT_PREFIX = re.compile(r"^\[[^\]]+\]\s+")
 
 class HookPayload(BaseModel):
     text: str
+    transcript_path: str = ""  # optional, sent by user_prompt / stop hooks
+    task_type: str = ""        # "created" | "completed" for /hook/task
+    meta: str = ""             # short meta (e.g. "15.2s · 1137 tok") shown in header
 
 
 def create_app(feishu: FeishuClient, expected_token: str) -> FastAPI:
@@ -36,28 +47,76 @@ def create_app(feishu: FeishuClient, expected_token: str) -> FastAPI:
     @app.post("/hook/user_prompt")
     async def user_prompt(payload: HookPayload, authorization: str = Header(default="")):
         _check_auth(authorization)
+        if payload.transcript_path:
+            remember_transcript(payload.transcript_path)
         raw = _PROJECT_PREFIX.sub("", payload.text, count=1)
         if claim_echo(raw):
             log.info("suppressing feishu echo: %r", raw[:60])
             return {"ok": True, "skipped": "feishu-echo"}
-        return _push(feishu, f"🧑 {payload.text}")
+        return _push_header_card(feishu, "🧑", "你说", payload.text, color="blue")
 
     @app.post("/hook/assistant_reply")
     async def assistant_reply(payload: HookPayload, authorization: str = Header(default="")):
         _check_auth(authorization)
-        # Render as a feishu interactive card so markdown (bold, headers,
-        # code blocks, lists, links) actually renders on the phone.
-        # Cards have a ~30KB JSON limit — fall back to plain text if longer.
-        md = f"🤖 {payload.text}"
-        if len(md) > 25000:
-            log.info("assistant_reply too big for card (%d chars), falling back to text", len(md))
-            return _push(feishu, md)
-        return _push_card(feishu, md)
+        if payload.transcript_path:
+            remember_transcript(payload.transcript_path)
+        chip, body = _split_prefix(payload.text)
+        title_bits = ["🤖"]
+        if chip:
+            title_bits.append(chip)
+        title_bits.append("Claude")
+        if payload.meta:
+            title_bits.append(f"· {payload.meta}")
+        title = " ".join(title_bits)
+
+        if len(body) > 25000:
+            log.info("assistant_reply too big for card (%d chars), falling back to text", len(body))
+            return _push(feishu, f"🤖 {payload.text}")
+        try:
+            feishu.send_markdown_card(body, title=title, color="violet", with_actions=True)
+            return {"ok": True}
+        except Exception as e:
+            log.exception("failed to push assistant card: %s", e)
+            return {"ok": False, "error": str(e)}
 
     @app.post("/hook/tool_use")
     async def tool_use(payload: HookPayload, authorization: str = Header(default="")):
         _check_auth(authorization)
+        if is_tool_use_paused():
+            return {"ok": True, "skipped": "paused"}
         return _push(feishu, f"🛠️ {payload.text}")
+
+    @app.post("/hook/file_touched")
+    async def file_touched(payload: HookPayload, authorization: str = Header(default="")):
+        _check_auth(authorization)
+        # payload.text format: "<action>|<file_path>"
+        action, _, fp = payload.text.partition("|")
+        files_tracker.record(action.strip() or "?", fp.strip())
+        return {"ok": True}
+
+    @app.post("/hook/task")
+    async def task_event(payload: HookPayload, authorization: str = Header(default="")):
+        _check_auth(authorization)
+        if payload.task_type == "created":
+            return _push_header_card(feishu, "🆕", "新任务", payload.text, color="green")
+        if payload.task_type == "completed":
+            return _push_header_card(feishu, "✅", "完成", payload.text, color="turquoise")
+        return _push(feishu, payload.text)
+
+    @app.post("/hook/notification")
+    async def notification(payload: HookPayload, authorization: str = Header(default="")):
+        _check_auth(authorization)
+        return _push_header_card(feishu, "🔔", "通知", payload.text, color="orange")
+
+    @app.post("/hook/bash_result")
+    async def bash_result(payload: HookPayload, authorization: str = Header(default="")):
+        _check_auth(authorization)
+        if is_tool_use_paused():
+            return {"ok": True, "skipped": "paused"}
+        failed = payload.meta == "fail"
+        color = "red" if failed else "green"
+        icon = "❌" if failed else "✅"
+        return _push_header_card(feishu, icon, "Bash", payload.text, color=color)
 
     return app
 
@@ -77,4 +136,29 @@ def _push_card(feishu: FeishuClient, md: str) -> dict:
         return {"ok": True}
     except Exception as e:
         log.exception("failed to push card to feishu: %s", e)
+        return {"ok": False, "error": str(e)}
+
+
+def _split_prefix(text: str) -> tuple:
+    """Split off the "[project] " prefix added by post_hook. Returns
+    (header_chip, body)."""
+    m = _PROJECT_PREFIX.match(text)
+    if m:
+        return m.group(0).strip(), text[len(m.group(0)):]
+    return "", text
+
+
+def _push_header_card(feishu: FeishuClient, emoji: str, label: str, text: str, color: str) -> dict:
+    """Send a small colored-header card. `text` may carry the [project] prefix."""
+    chip, body = _split_prefix(text)
+    title_bits = [emoji]
+    if chip:
+        title_bits.append(chip)
+    title_bits.append(label)
+    title = " ".join(title_bits)
+    try:
+        feishu.send_header_card(title, body, color=color)
+        return {"ok": True}
+    except Exception as e:
+        log.exception("failed to push header card: %s", e)
         return {"ok": False, "error": str(e)}

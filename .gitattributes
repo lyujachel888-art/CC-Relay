@@ -1,3 +1,9 @@
 * text=auto
 *.sh text eol=lf
 *.py text eol=lf
+
+# Exclude dev-only paths from GitHub release archives
+docs/           export-ignore
+.superpowers/   export-ignore
+.claude/        export-ignore
+status.html     export-ignore

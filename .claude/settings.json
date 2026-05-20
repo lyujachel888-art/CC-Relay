@@ -32,6 +32,59 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python $CLAUDE_PROJECT_DIR/hooks/post_hook.py post_tool"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python $CLAUDE_PROJECT_DIR/hooks/post_hook.py post_bash"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python $CLAUDE_PROJECT_DIR/hooks/post_hook.py notification"
+          }
+        ]
+      }
+    ],
+    "TaskCreated": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python $CLAUDE_PROJECT_DIR/hooks/post_hook.py task_created"
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python $CLAUDE_PROJECT_DIR/hooks/post_hook.py task_completed"
+          }
+        ]
+      }
     ]
   }
 }

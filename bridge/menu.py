@@ -42,13 +42,25 @@ def is_trigger(text: str) -> bool:
     return text.strip().lower() in _TRIGGERS
 
 
-def build_menu_text() -> str:
-    lines = ["📋 可用指令（回复数字注入）"]
-    for i, cmd in enumerate(COMMANDS, 1):
-        lines.append(f"{i}. {cmd}")
+MENU_TITLE = "📋 可用指令"
+
+
+def build_menu_body() -> str:
+    """Markdown body for the menu card — header is set separately."""
+    lines = ["**回复数字注入对应命令**"]
     lines.append("")
-    lines.append(f"(菜单 {int(MENU_TTL_SEC)}s 内有效，直接发文字仍按 prompt 处理)")
+    for i, cmd in enumerate(COMMANDS, 1):
+        # Use `code` styling so commands stand out from the index number.
+        lines.append(f"`{i:>2}.`  `{cmd}`")
+    lines.append("")
+    lines.append(f"*菜单 {int(MENU_TTL_SEC)}s 内有效；其它文字按 prompt 处理*")
     return "\n".join(lines)
+
+
+def build_menu_text() -> str:
+    """Plain-text fallback (used when card path is unavailable)."""
+    body = build_menu_body()
+    return f"{MENU_TITLE}\n{body}"
 
 
 def offer_menu() -> None:

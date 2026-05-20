@@ -1,3 +1,8 @@
+"""Feishu (Lark) API client used by cc-relay to send messages, cards, images
+and files to the configured user.
+
+:author: jachel.lyu
+"""
 import json
 import re
 import unicodedata
@@ -104,6 +109,41 @@ def _parse_gfm_table(block: str) -> Optional[dict]:
     }
 
 
+def _default_action_bar() -> dict:
+    """Three quick-action buttons appended to every 🤖 card.
+
+    v2 schema rejected the old `action` tag — buttons go inside a column_set,
+    one per column, and use `behaviors: [{type: callback, value: ...}]` to
+    trigger a card.action.trigger event we can handle on the long-conn side.
+    """
+
+    def col_btn(label: str, btn_type: str, value: dict) -> dict:
+        return {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": label},
+                    "type": btn_type,
+                    "width": "fill",
+                    "behaviors": [{"type": "callback", "value": value}],
+                }
+            ],
+        }
+
+    return {
+        "tag": "column_set",
+        "horizontal_spacing": "small",
+        "columns": [
+            col_btn("继续", "primary", {"action": "inject", "text": "继续"}),
+            col_btn("📎 文件", "default", {"action": "file_help"}),
+            col_btn("打断", "danger", {"action": "interrupt"}),
+        ],
+    }
+
+
 def _md_to_v2_elements(md: str) -> list:
     """Split `md` into a sequence of v2 card elements: markdown segments
     separated by native `table` elements wherever a GFM table appears."""
@@ -206,15 +246,55 @@ class FeishuClient:
             log_id = getattr(resp, "get_log_id", lambda: "?")()
             raise RuntimeError(f"feishu send failed code={code} msg={msg} log_id={log_id}")
 
-    def send_markdown_card(self, md: str) -> None:
-        """Send `md` as a feishu v2 interactive card. GFM tables become native
-        `table` elements (real borders, columns), everything else stays as
-        markdown segments. Use this for long assistant replies."""
+    def send_header_card(
+        self,
+        title: str,
+        body_md: str,
+        color: str = "blue",
+    ) -> None:
+        """Compact v2 card with a colored header bar + markdown body.
+
+        color: feishu template name — blue/green/orange/red/purple/turquoise/
+                yellow/wathet/violet/carmine/indigo/grey.
+        """
         card = {
             "schema": "2.0",
             "config": {"wide_screen_mode": True},
-            "body": {"elements": _md_to_v2_elements(md)},
+            "header": {
+                "title": {"tag": "plain_text", "content": title},
+                "template": color,
+            },
+            "body": {
+                "elements": [
+                    {"tag": "markdown", "content": _adapt_md_for_feishu(body_md)},
+                ],
+            },
         }
+        self._send_simple("interactive", json.dumps(card, ensure_ascii=False))
+
+    def send_markdown_card(
+        self,
+        md: str,
+        title: str = "",
+        color: str = "violet",
+        with_actions: bool = True,
+    ) -> None:
+        """Send `md` as a feishu v2 interactive card. GFM tables become native
+        `table` elements, everything else stays as markdown. Optional colored
+        header bar (when title is set) and action button row."""
+        elements = _md_to_v2_elements(md)
+        if with_actions:
+            elements.append(_default_action_bar())
+        card = {
+            "schema": "2.0",
+            "config": {"wide_screen_mode": True},
+            "body": {"elements": elements},
+        }
+        if title:
+            card["header"] = {
+                "title": {"tag": "plain_text", "content": title},
+                "template": color,
+            }
         req = (
             CreateMessageRequest.builder()
             .receive_id_type("open_id")
@@ -302,6 +382,56 @@ class FeishuClient:
             raise RuntimeError(
                 f"feishu send {msg_type} failed code={getattr(resp,'code','?')} msg={getattr(resp,'msg','?')}"
             )
+
+    def send_startup_card(self) -> None:
+        """Send a persistent quick-action card when bridge starts.
+        Replaces the native bot menu (which can't be configured via API for P2P chats)."""
+
+        def col_btn(label: str, action_value: dict, btn_type: str = "default") -> dict:
+            return {
+                "tag": "column",
+                "width": "weighted",
+                "weight": 1,
+                "elements": [{
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": label},
+                    "type": btn_type,
+                    "width": "fill",
+                    "behaviors": [{"type": "callback", "value": action_value}],
+                }],
+            }
+
+        card = {
+            "schema": "2.0",
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {"tag": "plain_text", "content": "🚀 CC Relay 已连接"},
+                "template": "green",
+            },
+            "body": {
+                "elements": [
+                    {
+                        "tag": "column_set",
+                        "horizontal_spacing": "small",
+                        "columns": [
+                            col_btn("📋 菜单", {"action": "menu"}),
+                            col_btn("📸 截图", {"action": "snap"}),
+                            col_btn("📜 历史", {"action": "history"}),
+                        ],
+                    },
+                    {
+                        "tag": "column_set",
+                        "horizontal_spacing": "small",
+                        "columns": [
+                            col_btn("🗑️ 清屏", {"action": "inject", "text": "/clear"}),
+                            col_btn("⏸ 暂停", {"action": "pause"}),
+                            col_btn("▶ 恢复", {"action": "resume"}),
+                        ],
+                    },
+                ]
+            },
+        }
+        self._send_simple("interactive", json.dumps(card, ensure_ascii=False))
 
     def download_resource(
         self, message_id: str, file_key: str, resource_type: str = "image"
