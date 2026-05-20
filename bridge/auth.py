@@ -8,8 +8,8 @@ location inside hooks/. post_hook.py reads the same file and sends it as
 import secrets
 from pathlib import Path
 
-# Same path the WSL bridge and the Windows hook can both reach.
-TOKEN_PATH_WSL = Path("/mnt/e/MyProject/RC/hooks/.bridge_token")
+# auth.py lives in bridge/; hooks/ is one level up at the repo root.
+TOKEN_PATH_WSL = Path(__file__).resolve().parent.parent / "hooks" / ".bridge_token"
 
 HEADER_NAME = "Authorization"
 HEADER_PREFIX = "Bearer "

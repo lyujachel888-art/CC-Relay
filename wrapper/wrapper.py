@@ -75,7 +75,24 @@ def title_keeper(title: str, stop_event: threading.Event):
         except Exception:
             pass
 
-CLAUDE_EXE = r"C:\Users\Jachel\.local\bin\claude.exe"
+def _find_claude() -> str:
+    """Locate claude.exe: env override → PATH → %LOCALAPPDATA% default install."""
+    override = os.environ.get("CLAUDE_EXE")
+    if override:
+        return override
+    found = shutil.which("claude")
+    if found:
+        return found
+    local_app = os.environ.get("LOCALAPPDATA", "")
+    if local_app:
+        candidate = Path(local_app) / "AnthropicClaude" / "claude.exe"
+        if candidate.exists():
+            return str(candidate)
+    raise FileNotFoundError(
+        "claude.exe not found. Add claude to PATH or set the CLAUDE_EXE environment variable."
+    )
+
+CLAUDE_EXE = _find_claude()
 LISTEN_HOST = "127.0.0.1"
 LISTEN_PORT = 8788
 LOG_FILE = Path(__file__).parent / "wrapper.log"

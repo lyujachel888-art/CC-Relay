@@ -4,6 +4,7 @@
 # for lark_oapi imports (>3 min). One-time setup:
 #   python3 -m venv ~/.venvs/feishu-bridge
 #   ~/.venvs/feishu-bridge/bin/pip install -r /mnt/e/MyProject/RC/bridge/requirements.txt
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source ~/.venvs/feishu-bridge/bin/activate
-cd /mnt/e/MyProject/RC/bridge
+cd "$REPO_ROOT/bridge"
 exec python -u main.py
