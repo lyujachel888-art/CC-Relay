@@ -197,6 +197,48 @@ FEISHU_USER_OPEN_ID=ou_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 ---
 
+---
+
+### 环境变量与运行参数
+
+#### bridge/.env — Feishu 凭证（必填）
+
+| 变量名 | 必填 | 说明 |
+|--------|------|------|
+| `FEISHU_APP_ID` | ✅ | 飞书应用的 App ID，格式 `cli_xxx` |
+| `FEISHU_APP_SECRET` | ✅ | 飞书应用的 App Secret |
+| `FEISHU_USER_OPEN_ID` | ✅ | 接收推送的用户 open_id，格式 `ou_xxx` |
+
+#### Shell 环境变量 — Hook 行为控制（可选）
+
+在启动 Claude Code 的终端中设置，控制 `hooks/post_hook.py` 的上报行为：
+
+| 变量名 | 值 | 说明 |
+|--------|----|------|
+| `SKIP_TOOL_HOOK` | `1` | 静默工具调用通知（PreToolUse），保留用户输入和 Claude 回复推送 |
+| `SKIP_ALL_HOOK` | `1` | 关闭所有 Hook 上报，适合 bridge 停止时防止超时积压 |
+
+```powershell
+# 示例：仅关闭工具通知
+$env:SKIP_TOOL_HOOK = "1"
+claude
+```
+
+#### 端口（代码内硬编码，如需修改需同步改两处）
+
+| 端口 | 文件 | 用途 |
+|------|------|------|
+| `8787` | `bridge/main.py`、`hooks/post_hook.py` | Bridge HTTP 服务，Hook 脚本向此端口 POST |
+| `8788` | `wrapper/wrapper.py`、`bridge/injector.py` | Wrapper TCP 注入端口，Bridge 向 Claude 发消息 |
+
+#### Bridge Token（自动生成）
+
+Bridge 首次启动时自动生成随机 token，写入 `hooks/.bridge_token`（已被 `.gitignore` 排除）。Hook 脚本读取同一文件，用于对 `/hook/*` 端点做 Bearer Token 鉴权，无需手动配置。
+
+> **注意**：`bridge/auth.py` 中的 `TOKEN_PATH_WSL` 硬编码了 WSL 路径 `/mnt/e/MyProject/RC/hooks/.bridge_token`。如果你的项目路径不同，需修改 `bridge/auth.py` 第 12 行中的路径。
+
+---
+
 ### Claude Code Hooks 配置
 
 将 `.claude/settings.json` 中的 hooks 配置复制到你的项目 `.claude/settings.json`，或直接使用本仓库根目录作为 Claude Code 的工作目录。
