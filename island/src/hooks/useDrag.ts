@@ -8,7 +8,7 @@ const KEY = "window_pos";
 
 interface Pos { x: number; y: number; }
 
-export function useDrag(ref: React.RefObject<HTMLElement>) {
+export function useDrag(ref: React.RefObject<HTMLElement | null>) {
   // restore on mount
   useEffect(() => {
     (async () => {
