@@ -9,24 +9,26 @@ from typing import Any, Dict, List
 
 log = logging.getLogger("bridge.event_broadcast")
 
+Event = Dict[str, Any]
+
 
 class EventBroadcaster:
     def __init__(self, maxsize: int = 100) -> None:
         self._maxsize = maxsize
-        self._subscribers: List[asyncio.Queue] = []
+        self._subscribers: List[asyncio.Queue[Event]] = []
 
-    def subscribe(self) -> asyncio.Queue:
-        q: asyncio.Queue = asyncio.Queue(maxsize=self._maxsize)
+    def subscribe(self) -> asyncio.Queue[Event]:
+        q: asyncio.Queue[Event] = asyncio.Queue(maxsize=self._maxsize)
         self._subscribers.append(q)
         return q
 
-    def unsubscribe(self, q: asyncio.Queue) -> None:
+    def unsubscribe(self, q: asyncio.Queue[Event]) -> None:
         try:
             self._subscribers.remove(q)
         except ValueError:
             pass
 
-    async def publish(self, event: Dict[str, Any]) -> None:
+    async def publish(self, event: Event) -> None:
         for q in list(self._subscribers):
             try:
                 q.put_nowait(event)

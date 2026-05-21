@@ -1,9 +1,7 @@
 import asyncio
-import pytest
 from event_broadcast import EventBroadcaster
 
 
-@pytest.mark.asyncio
 async def test_subscribe_returns_queue_that_receives_published_events():
     bc = EventBroadcaster()
     q = bc.subscribe()
@@ -14,7 +12,6 @@ async def test_subscribe_returns_queue_that_receives_published_events():
     assert event == {"type": "tool_use", "project": "RC", "text": "Bash: ls"}
 
 
-@pytest.mark.asyncio
 async def test_publish_fanouts_to_all_subscribers():
     bc = EventBroadcaster()
     q1, q2 = bc.subscribe(), bc.subscribe()
@@ -25,7 +22,6 @@ async def test_publish_fanouts_to_all_subscribers():
     assert (await asyncio.wait_for(q2.get(), timeout=0.5))["project"] == "Bot"
 
 
-@pytest.mark.asyncio
 async def test_unsubscribe_stops_delivery_to_that_queue():
     bc = EventBroadcaster()
     q1, q2 = bc.subscribe(), bc.subscribe()
@@ -37,7 +33,6 @@ async def test_unsubscribe_stops_delivery_to_that_queue():
     assert not q2.empty()
 
 
-@pytest.mark.asyncio
 async def test_slow_subscriber_drops_events_instead_of_blocking_publisher():
     """A subscriber that never reads must not block publish() for others."""
     bc = EventBroadcaster(maxsize=2)
