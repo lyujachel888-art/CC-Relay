@@ -25,21 +25,21 @@ python --version
 
 Parse the output. If the version is below 3.11, tell the user: "CC Relay needs Python 3.11+ (current: <version>). Install from https://www.python.org/ and re-run /cc-relay:setup." Then stop.
 
-## Step 3: Install pywinpty
+## Step 3: Install Python dependencies (wrapper + bridge)
 
-Check if pywinpty is already installed:
+Install all the runtime dependencies the wrapper and bridge need. (`pip install` is idempotent — already-installed packages are no-ops.)
+
 ```bash
-python -m pip show pywinpty
+python -m pip install pywinpty fastapi "uvicorn[standard]" lark-oapi python-dotenv
 ```
 
-If the command exits 0 (already installed): report version and move on.
+Verify each was installed:
 
-If exit non-zero (missing): install it:
 ```bash
-python -m pip install pywinpty
+python -m pip show pywinpty fastapi uvicorn lark-oapi python-dotenv
 ```
 
-If install fails with a permission error, tell the user: "pywinpty install failed (likely permissions). Run this in PowerShell manually: `python -m pip install --user pywinpty`, then re-run /cc-relay:setup." Then stop.
+If any package is missing in the output: install was incomplete. If install failed with a permission error, tell the user: "Dependency install failed (likely permissions). Run this in PowerShell manually: `python -m pip install --user pywinpty fastapi 'uvicorn[standard]' lark-oapi python-dotenv`, then re-run /cc-relay:setup." Then stop.
 
 ## Step 4: Locate claude.exe
 
@@ -136,35 +136,38 @@ If the write fails (e.g. profile path read-only): tell user the $PROFILE path an
 
 ## Step 7: Smoke-test bridge (TCP-port probe, not HTTP)
 
-Bridge has no /health endpoint — probe port 8787 instead.
+Bridge has no /health endpoint — probe port 8787 instead. The entire smoke test runs in **one** PowerShell process so the PID variable survives across launch/probe/cleanup (Claude's Bash tool starts a fresh shell per command block, so we can't split this across multiple bash blocks).
 
-Start bridge in the background (all PowerShell wrapped in single-quoted bash so $ vars survive):
 ```bash
-powershell -NoProfile -Command '$latestDir = (Get-ChildItem (Join-Path $HOME ".claude\plugins\cache\cc-relay\cc-relay") -Directory | Where-Object { $_.Name -match "^\d+(\.\d+)+$" } | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1).FullName; $ps1 = Join-Path $latestDir "scripts\launch_bridge.ps1"; (Start-Process powershell -ArgumentList "-ExecutionPolicy","Bypass","-NoProfile","-File",$ps1 -WindowStyle Hidden -PassThru).Id'
+powershell -NoProfile -Command '
+$latestDir = (Get-ChildItem (Join-Path $HOME ".claude\plugins\cache\cc-relay\cc-relay") -Directory | Where-Object { $_.Name -match "^\d+(\.\d+)+$" } | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1).FullName
+$ps1 = Join-Path $latestDir "scripts\launch_bridge.ps1"
+$proc = Start-Process powershell -ArgumentList "-ExecutionPolicy","Bypass","-NoProfile","-File",$ps1 -WindowStyle Hidden -PassThru
+Start-Sleep -Seconds 3
+$result = "FAIL"
+try {
+    $c = New-Object System.Net.Sockets.TcpClient
+    $c.Connect("127.0.0.1", 8787)
+    $c.Close()
+    $result = "OK"
+} catch { }
+Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+Write-Host "smoke=$result pid=$($proc.Id)"
+'
 ```
 
-Capture the printed PID (last line of output) into a variable for use below. Wait 3 seconds:
-```bash
-sleep 3
-```
+Parse the output line `smoke=OK pid=NNNN` or `smoke=FAIL pid=NNNN`.
 
-TCP probe port 8787:
-```bash
-powershell -NoProfile -Command 'try { $c = New-Object System.Net.Sockets.TcpClient; $c.Connect("127.0.0.1", 8787); $c.Close(); Write-Host "OK" } catch { Write-Host "FAIL" }'
-```
+If `smoke=OK`: report success and move to Final report.
 
-If OK: kill the bridge process (substitute the captured PID for <PID>):
-```bash
-powershell -NoProfile -Command 'Stop-Process -Id <PID> -Force'
-```
+If `smoke=FAIL`: diagnose what's holding port 8787:
 
-If FAIL: check if port 8787 is occupied by someone else:
 ```bash
 powershell -NoProfile -Command 'Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue | Format-Table OwningProcess, State'
 ```
 
-- If `Get-NetTCPConnection` shows a process holding 8787, tell the user the PID and suggest killing it. Then stop.
-- If the output is empty (port not held by anyone), the bridge launch itself crashed. Tell the user: "Bridge failed to start. Verify `launch_bridge.ps1` exists under the plugin's `scripts/` directory and that `pip show fastapi uvicorn lark-oapi` returns versions. Then re-run `/cc-relay:setup`." Then stop.
+- If output shows a process holding 8787, tell the user the PID and suggest killing it. Then stop.
+- If output is empty (port not held by anyone), the bridge crashed at launch. Tell the user: "Bridge failed to start. Re-run `/cc-relay:setup` (Step 3 reinstalls dependencies), or check that `python -c \"import fastapi, uvicorn, lark_oapi\"` succeeds." Then stop.
 
 ## Final report
 
