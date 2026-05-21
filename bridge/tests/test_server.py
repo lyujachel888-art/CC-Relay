@@ -1,3 +1,4 @@
+import httpx
 from unittest.mock import MagicMock
 from fastapi.testclient import TestClient
 from server import create_app
@@ -39,30 +40,40 @@ def test_user_prompt_swallows_feishu_errors_returns_ok():
     assert resp.json()["ok"] is False
 
 
-def test_events_endpoint_streams_published_events():
+async def test_events_endpoint_streams_published_events():
+    import asyncio
+    import json
     from event_broadcast import EventBroadcaster
 
     mock_feishu = MagicMock()
     bc = EventBroadcaster()
-    app = create_app(mock_feishu, expected_token="TOKEN", broadcaster=bc, sse_idle_timeout=0.5)
-    client = TestClient(app)
+    app = create_app(mock_feishu, expected_token="TOKEN", broadcaster=bc, sse_idle_timeout=2.0)
 
-    import threading, time, asyncio
+    transport = httpx.ASGITransport(app=app)
 
-    def publish_later():
-        time.sleep(0.1)
-        loop = asyncio.new_event_loop()
-        loop.run_until_complete(bc.publish({"type": "tool_use", "project": "RC", "text": "ls"}))
-        loop.close()
+    # Schedule the publish as a task so it runs concurrently with the ASGI app's
+    # SSE generator, which blocks on q.get() until an event arrives.
+    async def _publish():
+        # A short sleep lets the ASGI generator reach subscribe() + q.get() before
+        # we put anything into the queue.
+        await asyncio.sleep(0.05)
+        await bc.publish({"type": "tool_use", "project": "RC", "text": "ls"})
 
-    threading.Thread(target=publish_later, daemon=True).start()
+    pub_task = asyncio.create_task(_publish())
 
-    with client.stream("GET", "/events") as resp:
-        assert resp.status_code == 200
-        assert resp.headers["content-type"].startswith("text/event-stream")
-        for chunk in resp.iter_lines():
-            if chunk.startswith("data: "):
-                import json
-                payload = json.loads(chunk[len("data: "):])
-                assert payload == {"type": "tool_use", "project": "RC", "text": "ls"}
-                break
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/events")
+
+    await pub_task
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/event-stream")
+
+    found = False
+    for line in resp.text.splitlines():
+        if line.startswith("data: "):
+            payload = json.loads(line[len("data: "):])
+            assert payload == {"type": "tool_use", "project": "RC", "text": "ls"}
+            found = True
+            break
+    assert found, "no SSE data frame received within timeout"
