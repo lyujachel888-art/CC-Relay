@@ -5,19 +5,24 @@ WebSocket long-connection client.
 """
 import logging
 import threading
+from pathlib import Path
 
 import uvicorn
 
+from api_wrappers import attach_wrapper_routes
 from auth import ensure_token
 from config import load_config
+from config_store import ConfigStore
 from feishu import FeishuClient
+from router import Router
 from server import create_app
 from long_conn import start_ws_client
+from wrapper_registry import WrapperRegistry
 
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __author__ = "jachel.lyu"
-_BANNER = f"CC Relay v{__version__} — Claude Code ↔ Feishu 实时双向中继"
+_BANNER = f"CC Relay v{__version__} — Claude Code ↔ Feishu 多 wrapper 中继"
 
 
 def main() -> None:
@@ -31,16 +36,23 @@ def main() -> None:
     cfg = load_config()
     log.info("loaded config: app_id=%s open_id=%s", cfg.app_id, cfg.user_open_id)
 
+    config_path = Path(__file__).resolve().parent / "config.json"
+    store = ConfigStore(config_path)
+    registry = WrapperRegistry()
+    router = Router(store=store, registry=registry)
+    log.info("config.json=%s, %d known wrappers, active=%s",
+             config_path, len(store.wrappers), store.active_wrapper_id)
+
     feishu = FeishuClient(cfg.app_id, cfg.app_secret, cfg.user_open_id)
     token = ensure_token()
     log.info("hook token loaded (%d chars)", len(token))
-    app = create_app(feishu, token)
 
-    # Long-conn runs in background thread; FastAPI runs in main thread.
-    # feishu is passed so non-text messages can be answered with a hint.
+    app = create_app(feishu, token, registry=registry, router=router)
+    attach_wrapper_routes(app, registry=registry, store=store)
+
     ws_thread = threading.Thread(
         target=start_ws_client,
-        args=(cfg.app_id, cfg.app_secret, feishu),
+        args=(cfg.app_id, cfg.app_secret, feishu, router, registry),
         daemon=True,
         name="lark-ws",
     )

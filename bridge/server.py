@@ -31,7 +31,8 @@ class HookPayload(BaseModel):
     meta: str = ""             # short meta (e.g. "15.2s · 1137 tok") shown in header
 
 
-def create_app(feishu: FeishuClient, expected_token: str) -> FastAPI:
+def create_app(feishu: FeishuClient, expected_token: str,
+               registry=None, router=None) -> FastAPI:
     app = FastAPI()
 
     def _check_auth(authorization: str) -> None:

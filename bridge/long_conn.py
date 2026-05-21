@@ -498,7 +498,9 @@ def make_card_action_handler(feishu: Optional[FeishuClient] = None) -> Callable:
     return handler
 
 
-def start_ws_client(app_id: str, app_secret: str, feishu: Optional[FeishuClient] = None) -> None:
+def start_ws_client(app_id: str, app_secret: str,
+                    feishu: Optional[FeishuClient] = None,
+                    router=None, registry=None) -> None:
     """Block on lark WebSocket client. Run in a background thread."""
     handler = make_message_handler(feishu)
     card_handler = make_card_action_handler(feishu)
