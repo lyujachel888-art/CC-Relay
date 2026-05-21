@@ -57,7 +57,7 @@ powershell -NoProfile -Command '(Get-Command claude.exe -ErrorAction SilentlyCon
 
 3. Default install:
 ```bash
-powershell -NoProfile -Command '$p = Join-Path $env:LOCALAPPDATA "AnthropicClaude\\claude.exe"; if (Test-Path $p) { $p }'
+powershell -NoProfile -Command '$p = Join-Path $env:LOCALAPPDATA "AnthropicClaude\claude.exe"; if (Test-Path $p) { $p }'
 ```
 
 If all three return empty: tell user "claude.exe not found. Install Claude Code from https://claude.com/code first, then re-run /cc-relay:setup." Then stop.
@@ -71,7 +71,7 @@ Determine the target path:
 powershell -NoProfile -Command 'Join-Path $HOME ".claude\plugins\cc-relay\.env"'
 ```
 
-The expected path is C:\\Users\\<you>\\.claude\\plugins\\cc-relay\\.env. Read it via the Read tool (handle non-existence — that means "no credentials yet").
+The expected path is `C:\Users\<you>\.claude\plugins\cc-relay\.env`. Read it via the Read tool (handle non-existence — that means "no credentials yet").
 
 If the file exists, parse each line KEY=VALUE and check all 3 keys (FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_USER_OPEN_ID) are present and non-empty.
 
@@ -169,7 +169,7 @@ If a foreign process owns it, tell the user the PID and suggest killing it. Then
 
 If all 7 steps pass, tell the user verbatim:
 
-> CC Relay setup complete.
+> ✅ CC Relay setup complete.
 >
 > **Next steps:**
 > 1. **Close this Claude session and open a fresh PowerShell window** — the $PROFILE shim only loads at PowerShell startup.
