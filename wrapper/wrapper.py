@@ -92,6 +92,22 @@ def _find_claude() -> str:
         "claude.exe not found. Add claude to PATH or set the CLAUDE_EXE environment variable."
     )
 
+def _resolve_cwd() -> tuple[str, str]:
+    """Pick the cwd the child Claude process should run in.
+
+    Priority:
+      1. $CLAUDE_CWD env var, if it points to an existing dir
+      2. os.getcwd() — the wrapper's own process cwd
+
+    Returns (cwd_path, source_label) where source_label is "env CLAUDE_CWD"
+    or "process cwd" for logging."""
+    env_cwd = os.environ.get("CLAUDE_CWD")
+    if env_cwd and os.path.isdir(env_cwd):
+        return env_cwd, "env CLAUDE_CWD"
+    if env_cwd:
+        logging.warning("CLAUDE_CWD=%r not a directory, ignoring", env_cwd)
+    return os.getcwd(), "process cwd"
+
 CLAUDE_EXE = _find_claude()
 LISTEN_HOST = "127.0.0.1"
 LISTEN_PORT = 8788
@@ -275,7 +291,8 @@ def main():
     set_console_title(CONSOLE_TITLE)
     logging.info("console title set to %r", CONSOLE_TITLE)
 
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    project_root, cwd_src = _resolve_cwd()
+    logging.info("claude cwd=%s (from %s)", project_root, cwd_src)
     # Wrap in cmd /c so we can run `chcp 65001` inside the ConPTY before
     # claude.exe starts — this switches the child console's input/output code
     # page to UTF-8, so wrapper-injected UTF-8 bytes are decoded correctly.
@@ -283,7 +300,7 @@ def main():
     rows, cols = current_term_size()
     logging.info("spawn cmdline=%r initial size rows=%d cols=%d", cmd, rows, cols)
     proc = PtyProcess.spawn(cmd, dimensions=(rows, cols), cwd=project_root)
-    logging.info("spawned claude (via cmd /c chcp 65001) pid=%s cwd=%s", proc.pid, project_root)
+    logging.info("spawned claude pid=%s cwd=%s", proc.pid, project_root)
 
     stop_event = threading.Event()
     threads = [

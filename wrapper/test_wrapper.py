@@ -76,12 +76,53 @@ def test_only_crlf_payload_returns_empty():
     assert response == b"EMPTY\n"
 
 
+import os
+import tempfile
+
+# ---------------------------------------------------------------------------
+# _resolve_cwd tests
+# ---------------------------------------------------------------------------
+
+def test_resolve_cwd_uses_env_when_dir_exists(monkeypatch):
+    """When CLAUDE_CWD is set and points to a real dir, it wins."""
+    from wrapper import _resolve_cwd
+    with tempfile.TemporaryDirectory() as d:
+        monkeypatch.setenv("CLAUDE_CWD", d)
+        cwd, src = _resolve_cwd()
+        # Compare via realpath to neutralize symlinks (e.g. /var vs /private/var)
+        assert os.path.realpath(cwd) == os.path.realpath(d)
+        assert src == "env CLAUDE_CWD"
+
+
+def test_resolve_cwd_falls_back_when_env_dir_missing(monkeypatch, tmp_path):
+    """If CLAUDE_CWD points to a non-existent path, fall back to process cwd."""
+    from wrapper import _resolve_cwd
+    monkeypatch.setenv("CLAUDE_CWD", str(tmp_path / "does_not_exist"))
+    monkeypatch.chdir(tmp_path)
+    cwd, src = _resolve_cwd()
+    assert os.path.realpath(cwd) == os.path.realpath(str(tmp_path))
+    assert src == "process cwd"
+
+
+def test_resolve_cwd_no_env_uses_getcwd(monkeypatch, tmp_path):
+    """No CLAUDE_CWD set → process cwd."""
+    from wrapper import _resolve_cwd
+    monkeypatch.delenv("CLAUDE_CWD", raising=False)
+    monkeypatch.chdir(tmp_path)
+    cwd, src = _resolve_cwd()
+    assert os.path.realpath(cwd) == os.path.realpath(str(tmp_path))
+    assert src == "process cwd"
+
+
 if __name__ == "__main__":
     tests = [
         test_normal_payload_writes_text_then_cr,
         test_trailing_newlines_stripped,
         test_empty_payload_returns_empty,
         test_only_crlf_payload_returns_empty,
+        test_resolve_cwd_uses_env_when_dir_exists,
+        test_resolve_cwd_falls_back_when_env_dir_missing,
+        test_resolve_cwd_no_env_uses_getcwd,
     ]
     failed = 0
     for t in tests:
