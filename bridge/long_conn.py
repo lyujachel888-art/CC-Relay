@@ -49,13 +49,15 @@ def flatten_post(
     content: dict,
     feishu: Optional[FeishuClient] = None,
     message_id: str = "",
+    wrapper_id: str = "",
 ) -> str:
     """Flatten a Feishu rich-text (post) message into plain text.
 
     Post format: {"title": "...", "content": [[elem, elem, ...], [elem, ...], ...]}
     Each row is a list of inline elements (text / a / at / img / code_inline / ...).
-    Inline images are downloaded to the cache dir and inlined as a local path
-    so Claude can read them.
+    Inline images are downloaded to the active wrapper's cache subdir and
+    inlined as a local path so Claude can read them. If `wrapper_id` is empty
+    the image element is rendered as a placeholder (no download attempted).
     """
     lines = []
     title = (content.get("title") or "").strip()
@@ -79,10 +81,10 @@ def flatten_post(
                 parts.append("@" + (elem.get("user_name") or elem.get("user_id") or ""))
             elif tag == "img":
                 ik = elem.get("image_key", "")
-                if feishu and message_id and ik:
+                if feishu and message_id and ik and wrapper_id:
                     try:
                         data, fname = feishu.download_resource(message_id, ik, "image")
-                        win_path = save_image_bytes(data, fname)
+                        win_path = save_image_bytes(wrapper_id, data, fname)
                         parts.append(f"[图片:{win_path}]")
                     except Exception as e:
                         log.warning("post-img download failed: %s", e)
@@ -96,12 +98,10 @@ def flatten_post(
     return "\n".join(lines)
 
 
-def make_message_handler(feishu: Optional[FeishuClient] = None) -> Callable:
-    """Build a handler that injects incoming Feishu text into the wrapper PTY.
-
-    Non-text messages get a hint pushed back to the user so they know why
-    nothing happened on the Claude side.
-    """
+def make_message_handler(feishu: Optional[FeishuClient] = None,
+                         router=None, registry=None) -> Callable:
+    """Handler injects incoming Feishu text into the bot's currently-active
+    wrapper (looked up via router). Non-text messages get a feishu hint."""
 
     def reply_hint(hint: str) -> None:
         if feishu is None:
@@ -111,8 +111,24 @@ def make_message_handler(feishu: Optional[FeishuClient] = None) -> Callable:
         except Exception as e:
             log.warning("failed to push hint: %s", e)
 
+    def _active_wid() -> Optional[str]:
+        if router is None:
+            return None
+        return router.inbound()
+
+    def _route_and_inject(text: str) -> None:
+        wid = _active_wid()
+        if not wid:
+            reply_hint("⚠️ 当前无活跃且在线的 wrapper，请 /switch 切换或先启动 wrapper")
+            return
+        mark_injected(wid, text)
+        try:
+            inject(registry, wid, text)
+        except Exception as e:
+            log.exception("injection failed: %s", e)
+            reply_hint(f"⚠️ 注入失败: {e}")
+
     def do_send_file(raw_path: str) -> None:
-        """Resolve `raw_path`, validate, upload to feishu, push status hint."""
         if feishu is None:
             reply_hint("⚠️ feishu client 未注入，无法上传")
             return
@@ -138,7 +154,6 @@ def make_message_handler(feishu: Optional[FeishuClient] = None) -> Callable:
             reply_hint(f"⚠️ 上传失败: {e}")
 
     def push_menu_card() -> None:
-        """Send the slash-command menu as a styled card (or fall back to text)."""
         if feishu is None:
             return
         try:
@@ -160,7 +175,6 @@ def make_message_handler(feishu: Optional[FeishuClient] = None) -> Callable:
             log.warning("could not read message envelope: %s", e)
             return
 
-        # lark long-conn occasionally redelivers the same message — drop dupes.
         if msg_id:
             if msg_id in _seen_msg_ids:
                 log.info("duplicate message_id %s — skipped", msg_id)
@@ -183,18 +197,23 @@ def make_message_handler(feishu: Optional[FeishuClient] = None) -> Callable:
             flush=True,
         )
 
+        # ---- Rich-text / media branches ----
         if msg_type == "post":
             message_id = getattr(msg, "message_id", "")
-            text = flatten_post(content, feishu=feishu, message_id=message_id).strip()
+            # Pass the active wrapper id so inline images get cached in the
+            # right per-wrapper subdir; if no active wrapper, images render
+            # as placeholders rather than crashing.
+            wid_for_post = _active_wid() or ""
+            text = flatten_post(
+                content,
+                feishu=feishu,
+                message_id=message_id,
+                wrapper_id=wid_for_post,
+            ).strip()
             if not text:
                 reply_hint("⚠️ 富文本消息内容为空")
                 return
-            mark_injected(text)
-            try:
-                inject(text)
-            except Exception as e:
-                log.exception("injection failed: %s", e)
-                reply_hint(f"⚠️ 注入失败: {e}")
+            _route_and_inject(text)
             return
 
         if msg_type == "image":
@@ -206,17 +225,21 @@ def make_message_handler(feishu: Optional[FeishuClient] = None) -> Callable:
             if feishu is None:
                 reply_hint("⚠️ feishu client 未注入，无法下载图片")
                 return
+            wid = _active_wid()
+            if not wid:
+                reply_hint("⚠️ 没有活跃 wrapper，无法处理图片")
+                return
             try:
-                data, fname = feishu.download_resource(message_id, image_key, "image")
-                win_path = save_image_bytes(data, fname)
+                data_bytes, fname = feishu.download_resource(message_id, image_key, "image")
+                win_path = save_image_bytes(wid, data_bytes, fname)
             except Exception as e:
                 log.exception("image download failed: %s", e)
                 reply_hint(f"⚠️ 图片下载失败: {e}")
                 return
             prompt = f"请看一下这张飞书发来的图片：{win_path}"
-            mark_injected(prompt)
+            mark_injected(wid, prompt)
             try:
-                inject(prompt)
+                inject(registry, wid, prompt)
             except Exception as e:
                 log.exception("injection failed: %s", e)
                 reply_hint(f"⚠️ 注入失败: {e}")
@@ -232,17 +255,21 @@ def make_message_handler(feishu: Optional[FeishuClient] = None) -> Callable:
             if feishu is None:
                 reply_hint("⚠️ feishu client 未注入，无法下载文件")
                 return
+            wid = _active_wid()
+            if not wid:
+                reply_hint("⚠️ 没有活跃 wrapper，无法处理文件")
+                return
             try:
-                data, suggested = feishu.download_resource(message_id, file_key, "file")
-                win_path = save_file_bytes(data, suggested or file_name)
+                data_bytes, suggested = feishu.download_resource(message_id, file_key, "file")
+                win_path = save_file_bytes(wid, data_bytes, suggested or file_name)
             except Exception as e:
                 log.exception("file download failed: %s", e)
                 reply_hint(f"⚠️ 文件下载失败: {e}")
                 return
             prompt = f"请看一下这个飞书发来的文件（{file_name}）：{win_path}"
-            mark_injected(prompt)
+            mark_injected(wid, prompt)
             try:
-                inject(prompt)
+                inject(registry, wid, prompt)
             except Exception as e:
                 log.exception("injection failed: %s", e)
                 reply_hint(f"⚠️ 注入失败: {e}")
@@ -253,45 +280,58 @@ def make_message_handler(feishu: Optional[FeishuClient] = None) -> Callable:
             reply_hint(hint)
             return
 
+        # ---- Text-message commands ----
         text = (content.get("text") or "").strip()
         if not text:
             return
 
-        # Bridge-local control commands (NOT forwarded to Claude).
         low = text.lower()
-        # Strip Unicode variation selectors so emoji menu names match regardless
-        # of whether the Feishu client sends e.g. 🗑 or 🗑️.
-        _menu = text.strip().replace('️', '')
+        _menu = text.strip().replace('️', '')  # strip variation selectors
 
+        # Pause/resume — bucketed by wrapper
         if low in ("/pause", "/p") or _menu == "⏸ 暂停通知":
-            set_paused(True)
+            wid = _active_wid()
+            if not wid:
+                reply_hint("⚠️ 没有活跃 wrapper")
+                return
+            set_paused(wid, True)
             reply_hint("⏸ 已暂停 🛠️ tool_use 推送（/resume 恢复）")
             return
         if low in ("/resume", "/r") or _menu == "▶ 恢复通知":
-            set_paused(False)
+            wid = _active_wid()
+            if not wid:
+                reply_hint("⚠️ 没有活跃 wrapper")
+                return
+            set_paused(wid, False)
             reply_hint("▶ 已恢复 🛠️ tool_use 推送")
             return
         if low in ("/status", "/s"):
-            reply_hint(f"📊 tool_use 推送：{'⏸ 暂停中' if is_tool_use_paused() else '▶ 启用'}")
+            wid = _active_wid()
+            if not wid:
+                reply_hint("⚠️ 没有活跃 wrapper")
+                return
+            reply_hint(f"📊 tool_use 推送：{'⏸ 暂停中' if is_tool_use_paused(wid) else '▶ 启用'}")
             return
+
         if _menu == "🗑 清屏":
-            mark_injected("/clear")
-            try:
-                inject("/clear")
-            except Exception as e:
-                log.exception("injection failed: %s", e)
-                reply_hint(f"⚠️ 注入失败: {e}")
+            _route_and_inject("/clear")
             return
+
+        # /files — per-wrapper file list
         if low == "/files" or low.startswith("/files ") or _menu == "📂 文件":
+            wid = _active_wid()
+            if not wid:
+                reply_hint("⚠️ 没有活跃 wrapper")
+                return
             n = 20
             parts = low.split()
             if len(parts) >= 2 and parts[1].isdigit():
                 n = max(1, min(50, int(parts[1])))
-            items = files_tracker.list_recent(n)
+            items = files_tracker.list_recent(wid, n)
             if not items:
                 reply_hint("📂 还没有追踪到生成/修改的文件")
                 return
-            files_tracker.offer_selection([fp for _, _, fp in items])
+            files_tracker.offer_selection(wid, [fp for _, _, fp in items])
             body_lines = [f"**最近 {len(items)} 个修改/生成的文件**", "**回复数字直接上传到飞书**", ""]
             for i, (_ts, action, fp) in enumerate(items, 1):
                 rel = files_tracker.to_project_relative(fp)
@@ -305,15 +345,15 @@ def make_message_handler(feishu: Optional[FeishuClient] = None) -> Callable:
                     log.warning("files card failed: %s", e)
                     reply_hint("\n".join(body_lines))
             return
+
+        # /snap — global (screenshot is wrapper-window agnostic for now)
         if low in ("/snap", "/screenshot", "/截图", "/shot") or _menu == "📸 截图":
             global _last_snap_ts
             now = _time.time()
             if now - _last_snap_ts < _SNAP_DEBOUNCE_SEC:
-                log.info("/snap debounced (Δ=%.2fs since last)", now - _last_snap_ts)
                 reply_hint(f"⏳ 上一张截图刚发过 ({now - _last_snap_ts:.1f}s)，请稍后再试")
                 return
             _last_snap_ts = now
-            log.info("/snap triggered by text command %r", text)
             if feishu is None:
                 reply_hint("⚠️ feishu 不可用")
                 return
@@ -330,51 +370,61 @@ def make_message_handler(feishu: Optional[FeishuClient] = None) -> Callable:
                 log.exception("screenshot upload failed")
                 reply_hint(f"⚠️ 上传失败: {e}")
             return
+
+        # /history — per-wrapper transcript
         if low == "/history" or low.startswith("/history ") or _menu == "📜 历史":
+            wid = _active_wid()
+            if not wid:
+                reply_hint("⚠️ 没有活跃 wrapper")
+                return
             n = 5
             parts = low.split()
             if len(parts) >= 2 and parts[1].isdigit():
                 n = max(1, min(20, int(parts[1])))
-            tp = current_transcript()
+            tp = current_transcript(wid)
             if not tp:
                 reply_hint("📜 还没有捕获到 transcript（先聊一句）")
                 return
             reply_hint(format_history(recent_turns(tp, n)))
             return
 
-        # Menu shortcut: typing a trigger word pops up the numbered menu.
+        # /who and /switch are added in Task 15 — placeholder
+        # (do not implement here; Task 15 will insert the branches at this point)
+
+        # Menu trigger — show numbered command list
         if is_trigger(text):
-            offer_menu()
+            wid = _active_wid()
+            if not wid:
+                reply_hint("⚠️ 没有活跃 wrapper")
+                return
+            offer_menu(wid)
             push_menu_card()
             return
 
-        # File selection pending? A bare digit picks the file to upload.
-        chosen_file = files_tracker.try_select(text)
-        if chosen_file:
-            reply_hint(f"📤 选中 #{text}: {files_tracker.to_project_relative(chosen_file)}")
-            do_send_file(chosen_file)
-            return
+        # Bare digit → resolve as menu choice or file selection (per-wrapper)
+        wid_for_select = _active_wid()
+        if wid_for_select:
+            chosen_file = files_tracker.try_select(wid_for_select, text)
+            if chosen_file:
+                reply_hint(f"📤 选中 #{text}: {files_tracker.to_project_relative(chosen_file)}")
+                do_send_file(chosen_file)
+                return
 
-        # File upload shortcut: "传 <path>" / "send <path>".
+        # "传 <path>" — upload file
         send_target = parse_send_command(text)
         if send_target is not None:
             do_send_file(send_target)
             return
 
-        # If a slash-command menu is pending, translate the digit to the command.
-        chosen_cmd = try_consume_choice(text)
-        if chosen_cmd:
-            reply_hint(f"▶ 执行 {chosen_cmd}")
-            text = chosen_cmd
+        # If a menu choice is pending (per-wrapper), translate the digit to the command
+        if wid_for_select:
+            chosen_cmd = try_consume_choice(wid_for_select, text)
+            if chosen_cmd:
+                reply_hint(f"▶ 执行 {chosen_cmd}")
+                text = chosen_cmd
 
-        # Mark before injecting so the racing UserPromptSubmit hook (which
-        # POSTs back here within ~100ms) will find it and suppress the echo.
-        mark_injected(text)
-        try:
-            inject(text)
-        except Exception as e:
-            log.exception("injection failed: %s", e)
-            reply_hint(f"⚠️ 注入失败: {e}")
+        # Default: inject into active wrapper
+        _route_and_inject(text)
 
     return handler
 
@@ -389,8 +439,21 @@ def _toast(content: str, level: str = "info") -> P2CardActionTriggerResponse:
     return resp
 
 
-def make_card_action_handler(feishu: Optional[FeishuClient] = None) -> Callable:
-    """Build a handler for card-button taps from the phone."""
+def make_card_action_handler(feishu: Optional[FeishuClient] = None,
+                             router=None, registry=None) -> Callable:
+
+    def _route_inject(text: str) -> tuple:
+        if router is None or registry is None:
+            return False, "router 未初始化"
+        wid = router.inbound()
+        if not wid:
+            return False, "无活跃 wrapper"
+        mark_injected(wid, text)
+        try:
+            inject(registry, wid, text)
+            return True, ""
+        except Exception as e:
+            return False, str(e)
 
     def handler(data) -> P2CardActionTriggerResponse:
         try:
@@ -402,24 +465,22 @@ def make_card_action_handler(feishu: Optional[FeishuClient] = None) -> Callable:
 
         if action == "inject":
             text = value.get("text") or ""
-            if text:
-                mark_injected(text)
-                try:
-                    inject(text)
-                    return _toast(f"已发送: {text}")
-                except Exception as e:
-                    log.exception("card-action inject failed: %s", e)
-                    return _toast(f"注入失败: {e}", level="error")
-            return _toast("空内容", level="warning")
-        elif action == "interrupt":
-            try:
-                inject("\x1b")
-                return _toast("已发送 ESC")
-            except Exception as e:
-                log.exception("card-action interrupt failed: %s", e)
-                return _toast(f"中断失败: {e}", level="error")
-        elif action == "menu":
-            offer_menu()
+            if not text:
+                return _toast("空内容", level="warning")
+            ok, err = _route_inject(text)
+            return _toast(f"已发送: {text}" if ok else f"注入失败: {err}",
+                          level="error" if not ok else "info")
+
+        if action == "interrupt":
+            ok, err = _route_inject("\x1b")
+            return _toast("已发送 ESC" if ok else f"中断失败: {err}",
+                          level="error" if not ok else "info")
+
+        if action == "menu":
+            wid = router.inbound() if router else None
+            if not wid:
+                return _toast("无活跃 wrapper", level="warning")
+            offer_menu(wid)
             if feishu is not None:
                 try:
                     feishu.send_header_card(MENU_TITLE, build_menu_body(), color="orange")
@@ -427,17 +488,20 @@ def make_card_action_handler(feishu: Optional[FeishuClient] = None) -> Callable:
                     log.exception("menu push failed: %s", e)
                     return _toast(f"菜单推送失败: {e}", level="error")
             return _toast("菜单已发送")
-        elif action == "file_help":
+
+        if action == "file_help":
             if feishu is None:
                 return _toast("feishu 不可用", level="error")
-            items = files_tracker.list_recent(20)
+            wid = router.inbound() if router else None
+            if not wid:
+                return _toast("无活跃 wrapper", level="warning")
+            items = files_tracker.list_recent(wid, 20)
             try:
                 if items:
-                    files_tracker.offer_selection([fp for _, _, fp in items])
+                    files_tracker.offer_selection(wid, [fp for _, _, fp in items])
                     lines = [
                         f"**本会话修改/生成的 {len(items)} 个文件**",
-                        "**回复数字直接上传到飞书**",
-                        "",
+                        "**回复数字直接上传到飞书**", "",
                     ]
                     for i, (_ts, act, fp) in enumerate(items, 1):
                         rel = files_tracker.to_project_relative(fp)
@@ -464,13 +528,22 @@ def make_card_action_handler(feishu: Optional[FeishuClient] = None) -> Callable:
             except Exception as e:
                 log.exception("file_help push failed: %s", e)
                 return _toast(f"推送失败: {e}", level="error")
-        elif action == "pause":
-            set_paused(True)
+
+        if action == "pause":
+            wid = router.inbound() if router else None
+            if not wid:
+                return _toast("无活跃 wrapper", level="warning")
+            set_paused(wid, True)
             return _toast("⏸ 已暂停工具通知")
-        elif action == "resume":
-            set_paused(False)
+
+        if action == "resume":
+            wid = router.inbound() if router else None
+            if not wid:
+                return _toast("无活跃 wrapper", level="warning")
+            set_paused(wid, False)
             return _toast("▶ 已恢复工具通知")
-        elif action == "snap":
+
+        if action == "snap":
             if feishu is None:
                 return _toast("feishu 不可用", level="error")
             try:
@@ -480,10 +553,14 @@ def make_card_action_handler(feishu: Optional[FeishuClient] = None) -> Callable:
             except Exception as e:
                 log.exception("card-action snap failed: %s", e)
                 return _toast(f"截图失败: {e}", level="error")
-        elif action == "history":
+
+        if action == "history":
             if feishu is None:
                 return _toast("feishu 不可用", level="error")
-            tp = current_transcript()
+            wid = router.inbound() if router else None
+            if not wid:
+                return _toast("无活跃 wrapper", level="warning")
+            tp = current_transcript(wid)
             if not tp:
                 return _toast("还没有捕获到 transcript（先聊一句）", level="warning")
             try:
@@ -492,8 +569,8 @@ def make_card_action_handler(feishu: Optional[FeishuClient] = None) -> Callable:
             except Exception as e:
                 log.exception("card-action history failed: %s", e)
                 return _toast(f"历史推送失败: {e}", level="error")
-        else:
-            return _toast(f"未知动作: {action}", level="warning")
+
+        return _toast(f"未知动作: {action}", level="warning")
 
     return handler
 
@@ -502,8 +579,8 @@ def start_ws_client(app_id: str, app_secret: str,
                     feishu: Optional[FeishuClient] = None,
                     router=None, registry=None) -> None:
     """Block on lark WebSocket client. Run in a background thread."""
-    handler = make_message_handler(feishu)
-    card_handler = make_card_action_handler(feishu)
+    handler = make_message_handler(feishu, router, registry)
+    card_handler = make_card_action_handler(feishu, router, registry)
 
     event_handler = (
         lark.EventDispatcherHandler.builder("", "")
