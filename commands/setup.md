@@ -163,7 +163,8 @@ If FAIL: check if port 8787 is occupied by someone else:
 powershell -NoProfile -Command 'Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue | Format-Table OwningProcess, State'
 ```
 
-If a foreign process owns it, tell the user the PID and suggest killing it. Then stop.
+- If `Get-NetTCPConnection` shows a process holding 8787, tell the user the PID and suggest killing it. Then stop.
+- If the output is empty (port not held by anyone), the bridge launch itself crashed. Tell the user: "Bridge failed to start. Verify `launch_bridge.ps1` exists under the plugin's `scripts/` directory and that `pip show fastapi uvicorn lark-oapi` returns versions. Then re-run `/cc-relay:setup`." Then stop.
 
 ## Final report
 
