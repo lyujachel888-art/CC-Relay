@@ -57,8 +57,8 @@ claude                 # ← Claude 在 YourProject 里启动，并走飞书 bri
 
 ```powershell
 # 克隆仓库
-git clone https://github.com/lyujachel888-art/CC-Relay-.git
-cd CC-Relay-
+git clone https://github.com/lyujachel888-art/CC-Relay.git
+cd CC-Relay
 
 # 安装 bridge 依赖（在 bridge\.venv 内）
 cd bridge
