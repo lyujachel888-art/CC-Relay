@@ -12,9 +12,17 @@
   "app": {
     "windows": [
       {
-        "title": "island",
-        "width": 800,
-        "height": 600
+        "label": "main",
+        "title": "CC Island",
+        "width": 460,
+        "height": 200,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "shadow": false,
+        "dragDropEnabled": false
       }
     ],
     "security": {
