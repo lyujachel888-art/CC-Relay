@@ -13,7 +13,7 @@ log = logging.getLogger("bridge.screenshot")
 _CACHE_DIR = Path(__file__).resolve().parent.parent / ".feishu-cache"
 _SCRIPT_PATH = Path(__file__).resolve().parent.parent / "scripts" / "screenshot.ps1"
 
-DEFAULT_TITLE = "cc-bridge-wrapper"
+DEFAULT_TITLE = "云匣-"
 
 
 def take(title_substring: str = DEFAULT_TITLE, timeout: int = 10) -> Path:

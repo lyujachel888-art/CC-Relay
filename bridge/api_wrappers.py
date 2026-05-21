@@ -50,7 +50,7 @@ def attach_wrapper_routes(app: FastAPI, *, registry: WrapperRegistry, store: Con
             raise HTTPException(status_code=409, detail=str(e))
         # Persist wrapper metadata (id/name/expected_cwd) — port/pid stay in registry only.
         store.upsert_wrapper(id=p.id, name=p.name, expected_cwd=p.cwd)
-        log.info("registered wrapper id=%s port=%d pid=%d", p.id, p.port, p.pid)
+        log.info("云匣已注册 id=%s port=%d pid=%d", p.id, p.port, p.pid)
         return {
             "wrapper_id": info.id,
             "token": info.token,
@@ -77,5 +77,5 @@ def attach_wrapper_routes(app: FastAPI, *, registry: WrapperRegistry, store: Con
             raise HTTPException(status_code=404, detail="unknown wrapper")
         except BadToken:
             raise HTTPException(status_code=403, detail="bad token")
-        log.info("deregistered wrapper id=%s", p.id)
+        log.info("云匣已注销 id=%s", p.id)
         return {"ok": True}

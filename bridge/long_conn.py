@@ -119,7 +119,7 @@ def make_message_handler(feishu: Optional[FeishuClient] = None,
     def _route_and_inject(text: str) -> None:
         wid = _active_wid()
         if not wid:
-            reply_hint("⚠️ 当前无活跃且在线的 wrapper，请 /switch 切换或先启动 wrapper")
+            reply_hint("⚠️ 当前无活跃且在线的项目，请 /switch 切换或先启动云匣")
             return
         mark_injected(wid, text)
         try:
@@ -227,7 +227,7 @@ def make_message_handler(feishu: Optional[FeishuClient] = None,
                 return
             wid = _active_wid()
             if not wid:
-                reply_hint("⚠️ 没有活跃 wrapper，无法处理图片")
+                reply_hint("⚠️ 没有活跃项目，无法处理图片")
                 return
             try:
                 data_bytes, fname = feishu.download_resource(message_id, image_key, "image")
@@ -257,7 +257,7 @@ def make_message_handler(feishu: Optional[FeishuClient] = None,
                 return
             wid = _active_wid()
             if not wid:
-                reply_hint("⚠️ 没有活跃 wrapper，无法处理文件")
+                reply_hint("⚠️ 没有活跃项目，无法处理文件")
                 return
             try:
                 data_bytes, suggested = feishu.download_resource(message_id, file_key, "file")
@@ -288,11 +288,19 @@ def make_message_handler(feishu: Optional[FeishuClient] = None,
         low = text.lower()
         _menu = text.strip().replace('️', '')  # strip variation selectors
 
+        # New menu items map to /who and /switch
+        if _menu == "🔍 当前项目":
+            text = "/who"
+            low = text.lower()
+        elif _menu == "🔄 切换项目":
+            text = "/switch"
+            low = text.lower()
+
         # Pause/resume — bucketed by wrapper
         if low in ("/pause", "/p") or _menu == "⏸ 暂停通知":
             wid = _active_wid()
             if not wid:
-                reply_hint("⚠️ 没有活跃 wrapper")
+                reply_hint("⚠️ 没有活跃项目")
                 return
             set_paused(wid, True)
             reply_hint("⏸ 已暂停 🛠️ tool_use 推送（/resume 恢复）")
@@ -300,7 +308,7 @@ def make_message_handler(feishu: Optional[FeishuClient] = None,
         if low in ("/resume", "/r") or _menu == "▶ 恢复通知":
             wid = _active_wid()
             if not wid:
-                reply_hint("⚠️ 没有活跃 wrapper")
+                reply_hint("⚠️ 没有活跃项目")
                 return
             set_paused(wid, False)
             reply_hint("▶ 已恢复 🛠️ tool_use 推送")
@@ -308,7 +316,7 @@ def make_message_handler(feishu: Optional[FeishuClient] = None,
         if low in ("/status", "/s"):
             wid = _active_wid()
             if not wid:
-                reply_hint("⚠️ 没有活跃 wrapper")
+                reply_hint("⚠️ 没有活跃项目")
                 return
             reply_hint(f"📊 tool_use 推送：{'⏸ 暂停中' if is_tool_use_paused(wid) else '▶ 启用'}")
             return
@@ -321,7 +329,7 @@ def make_message_handler(feishu: Optional[FeishuClient] = None,
         if low == "/files" or low.startswith("/files ") or _menu == "📂 文件":
             wid = _active_wid()
             if not wid:
-                reply_hint("⚠️ 没有活跃 wrapper")
+                reply_hint("⚠️ 没有活跃项目")
                 return
             n = 20
             parts = low.split()
@@ -357,8 +365,14 @@ def make_message_handler(feishu: Optional[FeishuClient] = None,
             if feishu is None:
                 reply_hint("⚠️ feishu 不可用")
                 return
+            wid = _active_wid()
+            if not wid:
+                reply_hint("⚠️ 没有活跃项目，无法截图")
+                return
+            # Look up wrapper name for title pattern; fall back to id
+            target_name = next((w["name"] for w in router.list_wrappers() if w["id"] == wid), wid) if router else wid
             try:
-                path = screenshot_mod.take()
+                path = screenshot_mod.take(title_substring=f"云匣-{target_name}")
             except Exception as e:
                 log.exception("screenshot failed")
                 reply_hint(f"⚠️ 截图失败: {e}")
@@ -375,7 +389,7 @@ def make_message_handler(feishu: Optional[FeishuClient] = None,
         if low == "/history" or low.startswith("/history ") or _menu == "📜 历史":
             wid = _active_wid()
             if not wid:
-                reply_hint("⚠️ 没有活跃 wrapper")
+                reply_hint("⚠️ 没有活跃项目")
                 return
             n = 5
             parts = low.split()
@@ -390,13 +404,13 @@ def make_message_handler(feishu: Optional[FeishuClient] = None,
 
         if low in ("/who", "/whoami"):
             if router is None:
-                reply_hint("⚠️ router 未初始化")
+                reply_hint("⚠️ 渡桥路由未初始化")
                 return
             wid = router.inbound()
             if not wid:
                 lst = router.list_wrappers()
                 if not lst:
-                    reply_hint("⚠️ 未注册任何 wrapper")
+                    reply_hint("⚠️ 未注册任何项目")
                 else:
                     lines = ["📂 已注册项目（无活跃）："]
                     for w in lst:
@@ -415,13 +429,13 @@ def make_message_handler(feishu: Optional[FeishuClient] = None,
 
         if low.startswith("/switch"):
             if router is None:
-                reply_hint("⚠️ router 未初始化")
+                reply_hint("⚠️ 渡桥路由未初始化")
                 return
             parts = text.split(maxsplit=1)
             if len(parts) < 2:
                 lst = router.list_wrappers()
                 if not lst:
-                    reply_hint("⚠️ 未注册任何 wrapper")
+                    reply_hint("⚠️ 未注册任何项目")
                     return
                 lines = ["📂 选择项目（回复 `/switch 名称`）："]
                 for w in lst:
@@ -438,7 +452,7 @@ def make_message_handler(feishu: Optional[FeishuClient] = None,
             router.set_active(resolved)
             for w in router.list_wrappers():
                 if w["id"] == resolved:
-                    state = "🟢 在线" if w["online"] else "⚪ 离线（启动 wrapper 后即可发消息）"
+                    state = "🟢 在线" if w["online"] else "⚪ 离线（启动云匣后即可发消息）"
                     reply_hint(f"✅ 已切换到 **{w['name']}** ({w['id']}) — {state}")
                     return
             reply_hint(f"✅ 已切换到 {resolved}")
@@ -448,7 +462,7 @@ def make_message_handler(feishu: Optional[FeishuClient] = None,
         if is_trigger(text):
             wid = _active_wid()
             if not wid:
-                reply_hint("⚠️ 没有活跃 wrapper")
+                reply_hint("⚠️ 没有活跃项目")
                 return
             offer_menu(wid)
             push_menu_card()
@@ -497,10 +511,10 @@ def make_card_action_handler(feishu: Optional[FeishuClient] = None,
 
     def _route_inject(text: str) -> tuple:
         if router is None or registry is None:
-            return False, "router 未初始化"
+            return False, "渡桥路由未初始化"
         wid = router.inbound()
         if not wid:
-            return False, "无活跃 wrapper"
+            return False, "无活跃项目"
         mark_injected(wid, text)
         try:
             inject(registry, wid, text)
@@ -532,7 +546,7 @@ def make_card_action_handler(feishu: Optional[FeishuClient] = None,
         if action == "menu":
             wid = router.inbound() if router else None
             if not wid:
-                return _toast("无活跃 wrapper", level="warning")
+                return _toast("无活跃项目", level="warning")
             offer_menu(wid)
             if feishu is not None:
                 try:
@@ -547,7 +561,7 @@ def make_card_action_handler(feishu: Optional[FeishuClient] = None,
                 return _toast("feishu 不可用", level="error")
             wid = router.inbound() if router else None
             if not wid:
-                return _toast("无活跃 wrapper", level="warning")
+                return _toast("无活跃项目", level="warning")
             items = files_tracker.list_recent(wid, 20)
             try:
                 if items:
@@ -585,22 +599,26 @@ def make_card_action_handler(feishu: Optional[FeishuClient] = None,
         if action == "pause":
             wid = router.inbound() if router else None
             if not wid:
-                return _toast("无活跃 wrapper", level="warning")
+                return _toast("无活跃项目", level="warning")
             set_paused(wid, True)
             return _toast("⏸ 已暂停工具通知")
 
         if action == "resume":
             wid = router.inbound() if router else None
             if not wid:
-                return _toast("无活跃 wrapper", level="warning")
+                return _toast("无活跃项目", level="warning")
             set_paused(wid, False)
             return _toast("▶ 已恢复工具通知")
 
         if action == "snap":
             if feishu is None:
                 return _toast("feishu 不可用", level="error")
+            wid = router.inbound() if router else None
+            if not wid:
+                return _toast("无活跃项目，无法截图", level="warning")
+            target_name = next((w["name"] for w in router.list_wrappers() if w["id"] == wid), wid)
             try:
-                path = screenshot_mod.take()
+                path = screenshot_mod.take(title_substring=f"云匣-{target_name}")
                 feishu.upload_file_and_send(path)
                 return _toast(f"📸 截图已发 ({path.stat().st_size // 1024}KB)")
             except Exception as e:
@@ -612,7 +630,7 @@ def make_card_action_handler(feishu: Optional[FeishuClient] = None,
                 return _toast("feishu 不可用", level="error")
             wid = router.inbound() if router else None
             if not wid:
-                return _toast("无活跃 wrapper", level="warning")
+                return _toast("无活跃项目", level="warning")
             tp = current_transcript(wid)
             if not tp:
                 return _toast("还没有捕获到 transcript（先聊一句）", level="warning")

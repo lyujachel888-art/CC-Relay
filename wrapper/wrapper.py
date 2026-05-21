@@ -54,8 +54,9 @@ def set_console_utf8() -> None:
         logging.warning("set_console_utf8 failed: %s", e)
 
 
-# Fixed window title so bridge/screenshot.py can find this console by title.
-CONSOLE_TITLE = "cc-bridge-wrapper"
+# Window title pattern: "云匣-{name}". bridge/screenshot.py searches for windows
+# whose title contains "云匣-" so it can target a specific wrapper.
+CONSOLE_TITLE_PREFIX = "云匣-"
 
 
 def set_console_title(title: str) -> None:
@@ -408,8 +409,10 @@ def main() -> None:
         sys.stderr.write(f"FATAL: claude.exe not found at {CLAUDE_EXE}\n")
         sys.exit(2)
 
+    console_title = f"{CONSOLE_TITLE_PREFIX}{wrapper_name}"
+
     set_console_utf8()
-    set_console_title(CONSOLE_TITLE)
+    set_console_title(console_title)
 
     # Inject env so post_hook.py can include X-Wrapper-Id header
     env = os.environ.copy()
@@ -428,7 +431,7 @@ def main() -> None:
                          name="sock-in", daemon=True),
         threading.Thread(target=kick_tui, name="kick", args=(proc,), daemon=True),
         threading.Thread(target=resize_watcher, name="resize", args=(proc, stop_event), daemon=True),
-        threading.Thread(target=title_keeper, name="title", args=(CONSOLE_TITLE, stop_event), daemon=True),
+        threading.Thread(target=title_keeper, name="title", args=(console_title, stop_event), daemon=True),
         threading.Thread(target=heartbeat_thread, name="hb",
                          args=(wrapper_id, token_holder, stop_event), daemon=True),
         threading.Thread(target=registration_loop, name="reg-retry",
