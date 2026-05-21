@@ -388,8 +388,61 @@ def make_message_handler(feishu: Optional[FeishuClient] = None,
             reply_hint(format_history(recent_turns(tp, n)))
             return
 
-        # /who and /switch are added in Task 15 — placeholder
-        # (do not implement here; Task 15 will insert the branches at this point)
+        if low in ("/who", "/whoami"):
+            if router is None:
+                reply_hint("⚠️ router 未初始化")
+                return
+            wid = router.inbound()
+            if not wid:
+                lst = router.list_wrappers()
+                if not lst:
+                    reply_hint("⚠️ 未注册任何 wrapper")
+                else:
+                    lines = ["📂 已注册项目（无活跃）："]
+                    for w in lst:
+                        dot = "●" if w["online"] else "○"
+                        lines.append(f"  {dot} {w['name']}  ({w['id']})")
+                    lines.append("\n用 `/switch 名称` 选择")
+                    reply_hint("\n".join(lines))
+                return
+            for w in router.list_wrappers():
+                if w["id"] == wid:
+                    online = "🟢 在线" if w["online"] else "⚪ 离线"
+                    reply_hint(f"📁 当前活跃：**{w['name']}** ({w['id']}) — {online}")
+                    return
+            reply_hint(f"📁 当前活跃：{wid}")
+            return
+
+        if low.startswith("/switch"):
+            if router is None:
+                reply_hint("⚠️ router 未初始化")
+                return
+            parts = text.split(maxsplit=1)
+            if len(parts) < 2:
+                lst = router.list_wrappers()
+                if not lst:
+                    reply_hint("⚠️ 未注册任何 wrapper")
+                    return
+                lines = ["📂 选择项目（回复 `/switch 名称`）："]
+                for w in lst:
+                    dot = "●" if w["online"] else "○"
+                    active = " ⭐" if w["active"] else ""
+                    lines.append(f"  {dot} {w['name']}  ({w['id']}){active}")
+                reply_hint("\n".join(lines))
+                return
+            target = parts[1].strip()
+            resolved = router.resolve(target)
+            if not resolved:
+                reply_hint(f"⚠️ 未找到项目 '{target}'。可用：" + ", ".join(w["name"] for w in router.list_wrappers()))
+                return
+            router.set_active(resolved)
+            for w in router.list_wrappers():
+                if w["id"] == resolved:
+                    state = "🟢 在线" if w["online"] else "⚪ 离线（启动 wrapper 后即可发消息）"
+                    reply_hint(f"✅ 已切换到 **{w['name']}** ({w['id']}) — {state}")
+                    return
+            reply_hint(f"✅ 已切换到 {resolved}")
+            return
 
         # Menu trigger — show numbered command list
         if is_trigger(text):
