@@ -1,24 +1,26 @@
-"""Send a message to the wrapper running on Windows side, which writes it
-into the Claude Code PTY (+ Enter)."""
+"""Send a message to the wrapper TCP listener identified by wrapper_id.
+The wrapper writes the payload into its hosted Claude PTY (+ Enter)."""
 
 import socket
 
+from wrapper_registry import WrapperRegistry
+
 WRAPPER_HOST = "127.0.0.1"
-WRAPPER_PORT = 8788
 TIMEOUT_SEC = 3.0
 
 
-def inject(text: str) -> None:
-    """Connect to the wrapper, send UTF-8 text, close.
+def inject(registry: WrapperRegistry, wrapper_id: str, text: str) -> None:
+    """Look up the wrapper's port via the registry, then send text over TCP.
 
-    The wrapper appends Enter and writes to the PTY itself. Raises on
-    connection error or timeout — caller decides how to handle.
+    Raises:
+      WrapperUnknown — wrapper id never registered
+      WrapperOffline — wrapper is registered but heartbeat-stale
+      OSError       — transport failure (caller decides whether to retry)
     """
-    with socket.create_connection((WRAPPER_HOST, WRAPPER_PORT), timeout=TIMEOUT_SEC) as s:
+    port = registry.lookup_port(wrapper_id)
+    with socket.create_connection((WRAPPER_HOST, port), timeout=TIMEOUT_SEC) as s:
         s.sendall(text.encode("utf-8"))
-        # close write side so the wrapper's recv-until-empty loop exits
         s.shutdown(socket.SHUT_WR)
-        # optionally consume the wrapper's ack so we don't get RST warnings
         try:
             s.recv(64)
         except Exception:

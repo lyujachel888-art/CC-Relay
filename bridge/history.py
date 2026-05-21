@@ -1,6 +1,5 @@
-"""Cache the latest hook event's transcript_path so the user can run
-`/history` from feishu to get a quick summary without us having to walk
-the disk for the newest .jsonl every time."""
+"""Per-wrapper cache of the latest hook's transcript_path. Lets `/history`
+from feishu summarize the active wrapper's recent dialog."""
 
 import json
 from pathlib import Path
@@ -8,41 +7,29 @@ from threading import Lock
 from typing import List, Tuple
 
 _lock = Lock()
-_latest_transcript: str = ""
+_latest: dict = {}  # wrapper_id -> transcript path
 
 
-def remember(transcript_path: str) -> None:
-    global _latest_transcript
+def remember(wrapper_id: str, transcript_path: str) -> None:
     if not transcript_path:
         return
     with _lock:
-        _latest_transcript = transcript_path
+        _latest[wrapper_id] = transcript_path
 
 
-def current_transcript() -> str:
+def current_transcript(wrapper_id: str) -> str:
     with _lock:
-        return _latest_transcript
+        return _latest.get(wrapper_id, "")
 
 
-def _wsl_path(win_path: str) -> Path:
-    """The hook tells us a Windows path; bridge is in WSL — convert."""
-    p = (win_path or "").replace("\\", "/")
-    if len(p) >= 3 and p[1] == ":" and p[2] == "/":
-        return Path(f"/mnt/{p[0].lower()}/{p[3:]}")
-    return Path(p)
-
-
-def recent_turns(transcript_win: str, n_turns: int = 5) -> List[Tuple[str, str]]:
-    """Return up to `n_turns` recent (role, text) pairs. role is 'user' or
-    'assistant'. Skips tool_use / tool_result / system entries."""
-    path = _wsl_path(transcript_win)
+def recent_turns(transcript_path: str, n_turns: int = 5) -> List[Tuple[str, str]]:
+    path = Path(transcript_path)
     if not path.exists():
         return []
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except Exception:
         return []
-
     out: List[Tuple[str, str]] = []
     for line in reversed(lines):
         try:
@@ -58,17 +45,13 @@ def recent_turns(transcript_win: str, n_turns: int = 5) -> List[Tuple[str, str]]
         if isinstance(content, str):
             text = content
         elif isinstance(content, list):
-            parts = [
-                p.get("text", "")
-                for p in content
-                if isinstance(p, dict) and p.get("type") == "text"
-            ]
+            parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
             text = "\n".join(p for p in parts if p)
         text = text.strip()
         if not text:
             continue
         out.append((role, text))
-        if len(out) >= n_turns * 2:  # rough cap; we'll trim below
+        if len(out) >= n_turns * 2:
             break
     out.reverse()
     return out[-n_turns * 2:]

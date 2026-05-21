@@ -45,22 +45,43 @@ def create_app(feishu: FeishuClient, expected_token: str,
         if not hmac.compare_digest(supplied, expected_token):
             raise HTTPException(status_code=403, detail="bad token")
 
+    def _check_wrapper_id(x_wrapper_id: str) -> str:
+        """Phase 1 切换日：每个 /hook/* 请求必须携带 X-Wrapper-Id 并指向已知
+        wrapper（最近见过即可，允许刚下线的 wrapper 继续把延迟 hook 发上来）。"""
+        if not x_wrapper_id:
+            raise HTTPException(status_code=400, detail="missing X-Wrapper-Id header")
+        if registry is None:
+            raise HTTPException(status_code=400, detail=f"unknown wrapper {x_wrapper_id}")
+        if registry.is_online(x_wrapper_id):
+            return x_wrapper_id
+        # also allow recently-offline so deferred hooks still route
+        known = any(w.get("id") == x_wrapper_id for w in registry.snapshot())
+        if not known:
+            raise HTTPException(status_code=400, detail=f"unknown wrapper {x_wrapper_id}")
+        return x_wrapper_id
+
     @app.post("/hook/user_prompt")
-    async def user_prompt(payload: HookPayload, authorization: str = Header(default="")):
+    async def user_prompt(payload: HookPayload,
+                          authorization: str = Header(default=""),
+                          x_wrapper_id: str = Header(default="")):
         _check_auth(authorization)
+        wid = _check_wrapper_id(x_wrapper_id)
         if payload.transcript_path:
-            remember_transcript(payload.transcript_path)
+            remember_transcript(wid, payload.transcript_path)
         raw = _PROJECT_PREFIX.sub("", payload.text, count=1)
-        if claim_echo(raw):
+        if claim_echo(wid, raw):
             log.info("suppressing feishu echo: %r", raw[:60])
             return {"ok": True, "skipped": "feishu-echo"}
         return _push_header_card(feishu, "🧑", "你说", payload.text, color="blue")
 
     @app.post("/hook/assistant_reply")
-    async def assistant_reply(payload: HookPayload, authorization: str = Header(default="")):
+    async def assistant_reply(payload: HookPayload,
+                              authorization: str = Header(default=""),
+                              x_wrapper_id: str = Header(default="")):
         _check_auth(authorization)
+        wid = _check_wrapper_id(x_wrapper_id)
         if payload.transcript_path:
-            remember_transcript(payload.transcript_path)
+            remember_transcript(wid, payload.transcript_path)
         chip, body = _split_prefix(payload.text)
         title_bits = ["🤖"]
         if chip:
@@ -81,23 +102,32 @@ def create_app(feishu: FeishuClient, expected_token: str,
             return {"ok": False, "error": str(e)}
 
     @app.post("/hook/tool_use")
-    async def tool_use(payload: HookPayload, authorization: str = Header(default="")):
+    async def tool_use(payload: HookPayload,
+                       authorization: str = Header(default=""),
+                       x_wrapper_id: str = Header(default="")):
         _check_auth(authorization)
-        if is_tool_use_paused():
+        wid = _check_wrapper_id(x_wrapper_id)
+        if is_tool_use_paused(wid):
             return {"ok": True, "skipped": "paused"}
         return _push(feishu, f"🛠️ {payload.text}")
 
     @app.post("/hook/file_touched")
-    async def file_touched(payload: HookPayload, authorization: str = Header(default="")):
+    async def file_touched(payload: HookPayload,
+                           authorization: str = Header(default=""),
+                           x_wrapper_id: str = Header(default="")):
         _check_auth(authorization)
+        wid = _check_wrapper_id(x_wrapper_id)
         # payload.text format: "<action>|<file_path>"
         action, _, fp = payload.text.partition("|")
-        files_tracker.record(action.strip() or "?", fp.strip())
+        files_tracker.record(wid, action.strip() or "?", fp.strip())
         return {"ok": True}
 
     @app.post("/hook/task")
-    async def task_event(payload: HookPayload, authorization: str = Header(default="")):
+    async def task_event(payload: HookPayload,
+                         authorization: str = Header(default=""),
+                         x_wrapper_id: str = Header(default="")):
         _check_auth(authorization)
+        _check_wrapper_id(x_wrapper_id)
         if payload.task_type == "created":
             return _push_header_card(feishu, "🆕", "新任务", payload.text, color="green")
         if payload.task_type == "completed":
@@ -105,14 +135,20 @@ def create_app(feishu: FeishuClient, expected_token: str,
         return _push(feishu, payload.text)
 
     @app.post("/hook/notification")
-    async def notification(payload: HookPayload, authorization: str = Header(default="")):
+    async def notification(payload: HookPayload,
+                           authorization: str = Header(default=""),
+                           x_wrapper_id: str = Header(default="")):
         _check_auth(authorization)
+        _check_wrapper_id(x_wrapper_id)
         return _push_header_card(feishu, "🔔", "通知", payload.text, color="orange")
 
     @app.post("/hook/bash_result")
-    async def bash_result(payload: HookPayload, authorization: str = Header(default="")):
+    async def bash_result(payload: HookPayload,
+                          authorization: str = Header(default=""),
+                          x_wrapper_id: str = Header(default="")):
         _check_auth(authorization)
-        if is_tool_use_paused():
+        wid = _check_wrapper_id(x_wrapper_id)
+        if is_tool_use_paused(wid):
             return {"ok": True, "skipped": "paused"}
         failed = payload.meta == "fail"
         color = "red" if failed else "green"
