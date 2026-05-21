@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import FocusCat from "./FocusCat";
 import HistoryTrail from "./HistoryTrail";
+import TimeTag from "./TimeTag";
 import { COLOR_MAIN } from "../lib/colors";
 import { useSessions, type SessionState } from "../store/sessions";
 
@@ -47,6 +48,7 @@ export default function SessionRow({ session }: Props) {
         <div className="focus-cat"><FocusCat state={session.state} priority={session.color} /></div>
       </div>
       <HistoryTrail history={session.history} />
+      <TimeTag ts={session.lastEventAt} isError={isError} />
     </div>
   );
 }
