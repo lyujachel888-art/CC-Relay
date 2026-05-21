@@ -41,7 +41,8 @@ def log(line: str) -> None:
         pass
 
 
-def post(url: str, text: str, transcript_path: str = "", task_type: str = "", meta: str = "") -> None:
+def post(url: str, text: str, *, transcript_path: str = "",
+         task_type: str = "", meta: str = "", wrapper_id: str = "") -> None:
     safe = text.encode("utf-8", "replace").decode("utf-8", "replace")
     payload = {"text": safe}
     if transcript_path:
@@ -55,10 +56,12 @@ def post(url: str, text: str, transcript_path: str = "", task_type: str = "", me
     token = _read_token()
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    if wrapper_id:
+        headers["X-Wrapper-Id"] = wrapper_id
     req = urllib.request.Request(url, data=body, headers=headers, method="POST")
     try:
         resp = urllib.request.urlopen(req, timeout=TIMEOUT)
-        log(f"POST {url} ok status={resp.status} text_len={len(safe)}")
+        log(f"POST {url} ok status={resp.status} text_len={len(safe)} wrapper={wrapper_id or '-'}")
     except Exception as e:
         log(f"POST {url} FAIL {type(e).__name__}: {e}")
 
@@ -156,7 +159,8 @@ def main() -> None:
     if hook_type == "pre_tool" and os.environ.get("SKIP_TOOL_HOOK") == "1":
         log("skip-tool pre_tool")
         return
-    log(f"--- invoked hook_type={hook_type}")
+    wrapper_id = os.environ.get("WRAPPER_ID", "")
+    log(f"--- invoked hook_type={hook_type} wrapper={wrapper_id or '-'}")
 
     # Claude Code writes the hook event as UTF-8 JSON to our stdin. On Windows
     # Python defaults stdin encoding to the ANSI codepage (cp936 on zh-CN), so
@@ -177,7 +181,7 @@ def main() -> None:
         text = (data.get("prompt") or "").strip()
         log(f"user_prompt text({len(text)})={text!r}")
         if text:
-            post(BRIDGE_BASE + "/hook/user_prompt", prefix + text, transcript_path)
+            post(BRIDGE_BASE + "/hook/user_prompt", prefix + text, transcript_path=transcript_path, wrapper_id=wrapper_id)
     elif hook_type == "stop":
         if transcript_path:
             text, out_tokens, dur_ms = extract_stop_summary(Path(transcript_path))
@@ -189,7 +193,7 @@ def main() -> None:
                     meta_bits.append(f"{out_tokens} tok")
                 meta = " · ".join(meta_bits)
                 post(BRIDGE_BASE + "/hook/assistant_reply",
-                     prefix + text, transcript_path, meta=meta)
+                     prefix + text, transcript_path=transcript_path, meta=meta, wrapper_id=wrapper_id)
     elif hook_type == "pre_tool":
         tool_name = data.get("tool_name") or "?"
         summary = summarize_tool(tool_name, data.get("tool_input") or {})
@@ -198,19 +202,19 @@ def main() -> None:
             summary = summary[:200] + "…"
         body = f"{tool_name}: {summary}" if summary else tool_name
         log(f"pre_tool {tool_name} summary({len(summary)})")
-        post(BRIDGE_BASE + "/hook/tool_use", prefix + body)
+        post(BRIDGE_BASE + "/hook/tool_use", prefix + body, wrapper_id=wrapper_id)
     elif hook_type in ("task_created", "task_completed"):
         subject = (data.get("task_subject") or data.get("task_description") or "(no subject)").strip()
         task_type = "created" if hook_type == "task_created" else "completed"
         log(f"{hook_type} subject={subject!r}")
-        post(BRIDGE_BASE + "/hook/task", prefix + subject, task_type=task_type)
+        post(BRIDGE_BASE + "/hook/task", prefix + subject, task_type=task_type, wrapper_id=wrapper_id)
     elif hook_type == "post_tool":
         tn = data.get("tool_name") or ""
         ti = data.get("tool_input") or {}
         fp = ti.get("file_path") or ti.get("notebook_path") or ""
         if tn in ("Write", "Edit", "MultiEdit", "NotebookEdit") and fp:
             log(f"post_tool {tn} {fp!r}")
-            post(BRIDGE_BASE + "/hook/file_touched", f"{tn}|{fp}")
+            post(BRIDGE_BASE + "/hook/file_touched", f"{tn}|{fp}", wrapper_id=wrapper_id)
     elif hook_type == "post_bash":
         ti = data.get("tool_input") or {}
         cmd = (ti.get("command") or "").strip()
@@ -227,12 +231,12 @@ def main() -> None:
             preview += "…"
         body = f"$ {cmd_short}\n\n{preview}" if preview else f"$ {cmd_short}"
         log(f"post_bash failed={failed}")
-        post(BRIDGE_BASE + "/hook/bash_result", prefix + body, meta="fail" if failed else "ok")
+        post(BRIDGE_BASE + "/hook/bash_result", prefix + body, meta="fail" if failed else "ok", wrapper_id=wrapper_id)
     elif hook_type == "notification":
         message = (data.get("message") or data.get("title") or "").strip()
         log(f"notification keys={list(data.keys())} message={message!r}")
         if message:
-            post(BRIDGE_BASE + "/hook/notification", prefix + message)
+            post(BRIDGE_BASE + "/hook/notification", prefix + message, wrapper_id=wrapper_id)
 
 
 if __name__ == "__main__":
