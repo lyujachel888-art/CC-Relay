@@ -37,3 +37,32 @@ def test_user_prompt_swallows_feishu_errors_returns_ok():
 
     assert resp.status_code == 200
     assert resp.json()["ok"] is False
+
+
+def test_events_endpoint_streams_published_events():
+    from event_broadcast import EventBroadcaster
+
+    mock_feishu = MagicMock()
+    bc = EventBroadcaster()
+    app = create_app(mock_feishu, expected_token="TOKEN", broadcaster=bc, sse_idle_timeout=0.5)
+    client = TestClient(app)
+
+    import threading, time, asyncio
+
+    def publish_later():
+        time.sleep(0.1)
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(bc.publish({"type": "tool_use", "project": "RC", "text": "ls"}))
+        loop.close()
+
+    threading.Thread(target=publish_later, daemon=True).start()
+
+    with client.stream("GET", "/events") as resp:
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/event-stream")
+        for chunk in resp.iter_lines():
+            if chunk.startswith("data: "):
+                import json
+                payload = json.loads(chunk[len("data: "):])
+                assert payload == {"type": "tool_use", "project": "RC", "text": "ls"}
+                break

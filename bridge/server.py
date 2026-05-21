@@ -3,16 +3,20 @@ forwards them to Feishu as text messages or interactive cards.
 
 :author: jachel.lyu
 """
+import asyncio
 import hmac
+import json
 import logging
 import re
 
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 import files_tracker
 from auth import HEADER_PREFIX
 from echo_filter import claim_echo
+from event_broadcast import EventBroadcaster
 from feishu import FeishuClient
 from history import remember as remember_transcript
 from push_state import is_tool_use_paused
@@ -31,9 +35,24 @@ class HookPayload(BaseModel):
     meta: str = ""             # short meta (e.g. "15.2s · 1137 tok") shown in header
 
 
-def create_app(feishu: FeishuClient, expected_token: str,
-               registry=None, router=None) -> FastAPI:
+def create_app(
+    feishu: FeishuClient,
+    expected_token: str = "",
+    registry=None,
+    router=None,
+    broadcaster: EventBroadcaster | None = None,
+    sse_idle_timeout: float = 30.0,
+) -> FastAPI:
+    """Create the FastAPI app.
+
+    :param sse_idle_timeout: Seconds to wait for an event before closing the
+        SSE stream and expecting the client to reconnect.  Lower values make
+        the endpoint easier to test synchronously.  Default is 30 s.
+    """
     app = FastAPI()
+    if broadcaster is None:
+        broadcaster = EventBroadcaster()
+    app.state.broadcaster = broadcaster
 
     def _check_auth(authorization: str) -> None:
         """Reject the request if the Authorization header doesn't carry the
@@ -154,6 +173,35 @@ def create_app(feishu: FeishuClient, expected_token: str,
         color = "red" if failed else "green"
         icon = "❌" if failed else "✅"
         return _push_header_card(feishu, icon, "Bash", payload.text, color=color)
+
+    @app.get("/events")
+    async def events_stream():
+        q = broadcaster.subscribe()
+        async def gen():
+            try:
+                while True:
+                    try:
+                        event = await asyncio.wait_for(
+                            q.get(), timeout=sse_idle_timeout
+                        )
+                    except asyncio.TimeoutError:
+                        # No event within the idle window — close the stream so
+                        # the client can reconnect.  This keeps the generator
+                        # finite, which is required by sync test-clients.
+                        return
+                    data = json.dumps(event, ensure_ascii=False)
+                    yield f"data: {data}\n\n".encode()
+            finally:
+                broadcaster.unsubscribe(q)
+        return StreamingResponse(
+            gen(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-store",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     return app
 
