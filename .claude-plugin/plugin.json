@@ -1,0 +1,16 @@
+{
+  "name": "cc-relay",
+  "description": "Claude Code <-> Feishu real-time bridge (Windows-only)",
+  "version": "0.2.0",
+  "author": {
+    "name": "jachel.lyu"
+  },
+  "commands": [
+    "./commands/setup.md",
+    "./commands/status.md"
+  ],
+  "homepage": "https://github.com/lyujachel888-art/CC-Relay",
+  "repository": "https://github.com/lyujachel888-art/CC-Relay",
+  "license": "MIT",
+  "keywords": ["feishu", "bridge", "remote-control", "windows", "conpty", "claude-code"]
+}
