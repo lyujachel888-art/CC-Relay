@@ -123,6 +123,13 @@ def _id_with_collision_suffix(base_id: str, cwd: str) -> str:
 
 
 def pick_free_port() -> int:
+    """Ask the OS for a free local TCP port.
+
+    Note: there is a small TOCTOU window between this function returning and
+    the caller binding to the port. Another process could (theoretically) grab
+    it in between. On localhost-only single-user systems this is acceptable;
+    Phase 2 may refactor to bind once and pass the socket through.
+    """
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         s.bind(("127.0.0.1", 0))

@@ -220,12 +220,12 @@ $env:SKIP_TOOL_HOOK = "1"
 claude
 ```
 
-#### 端口（代码内硬编码，如需修改需同步改两处）
+#### 端口
 
-| 端口 | 文件 | 用途 |
-|------|------|------|
-| `8787` | `bridge/main.py`、`hooks/post_hook.py` | Bridge HTTP 服务，Hook 脚本向此端口 POST |
-| `8788` | `wrapper/wrapper.py`、`bridge/injector.py` | Wrapper TCP 注入端口，Bridge 向 Claude 发消息 |
+| 端口 | 用途 | 涉及文件 |
+|------|------|----------|
+| `8787` | Bridge HTTP，接收 hook POST | `bridge/main.py`、`hooks/post_hook.py` |
+| 动态端口 | 每个 wrapper TCP 监听端口（启动时由 OS 分配，通过 `/api/wrappers/register` 上报给 bridge） | `wrapper/wrapper.py`（`pick_free_port()`）、`bridge/injector.py`（通过 `WrapperRegistry.lookup_port` 查询） |
 
 #### Bridge Token（自动生成）
 

@@ -42,6 +42,9 @@ class MockWrapper:
                 conn, _ = self._srv.accept()
             except socket.timeout:
                 continue
+            except OSError:
+                # Socket was closed by stop() — exit cleanly
+                break
             try:
                 buf = b""
                 while True:
