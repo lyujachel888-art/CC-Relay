@@ -42,7 +42,7 @@ All PowerShell snippets are wrapped in single-quoted bash strings so `$env:VAR`,
 |---|---|---|
 | Bridge port 8787 listen | `powershell -NoProfile -Command '(Get-NetTCPConnection -LocalPort 8787 -State Listen -EA SilentlyContinue).OwningProcess'` | non-empty PID = LISTENING |
 | Wrapper port 8788 listen | `powershell -NoProfile -Command '(Get-NetTCPConnection -LocalPort 8788 -State Listen -EA SilentlyContinue).OwningProcess'` | non-empty PID = LISTENING |
-| Wrapper console window | `powershell -NoProfile -Command '(Get-Process \| Where-Object MainWindowTitle -eq "cc-bridge-wrapper").Count'` | `>= 1` |
+| Wrapper console window | `powershell -NoProfile -Command '(Get-Process \| Where-Object MainWindowTitle -like "云匣-*").Count'` | `>= 1` |
 
 ## Output format
 
@@ -70,7 +70,7 @@ Shim
 Runtime
   Port 8787 (bridge HTTP):                  LISTENING (pid 12345)
   Port 8788 (wrapper inject):               LISTENING (pid 67890)
-  Console window "cc-bridge-wrapper":       FOUND
+  Console window "云匣-*":                  FOUND
 
 Suggestions
   ✅ Everything looks good.
@@ -90,7 +90,7 @@ For each ❌ row, add a one-line suggestion under "Suggestions":
 | $PROFILE missing shim | "Run /cc-relay:setup to install the shim into your PowerShell profile" |
 | Port 8787 not listening | "Bridge not running. Start with: powershell -ExecutionPolicy Bypass -File <plugin>/scripts/launch_bridge.ps1" |
 | Port 8788 not listening | "Wrapper not running. Open a PowerShell, Enable-ClaudeBridge, then claude" |
-| Console window absent | "No wrapper window with title 'cc-bridge-wrapper' found — same as port 8788 case" |
+| Console window absent | "No wrapper window with title '云匣-*' found — same as port 8788 case" |
 
 If all rows pass, write `✅ Everything looks good.` under Suggestions.
 
