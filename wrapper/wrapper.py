@@ -55,7 +55,8 @@ def set_console_utf8() -> None:
 
 
 # Window title pattern: "云匣-{name}". bridge/screenshot.py searches for windows
-# whose title contains "云匣-" so it can target a specific wrapper.
+# whose title contains "云匣-" so it can target a specific wrapper. The name part
+# comes from --Name CLI arg or auto-derived CWD basename (see main()).
 CONSOLE_TITLE_PREFIX = "云匣-"
 
 
