@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import Optional
 
 from winpty import PtyProcess
 
@@ -92,9 +93,82 @@ def _find_claude() -> str:
         "claude.exe not found. Add claude to PATH or set the CLAUDE_EXE environment variable."
     )
 
+import argparse
+import hashlib
+import json as _json
+import re as _re
+import urllib.request as _urlreq
+import urllib.error as _urlerr
+
+BRIDGE_URL = os.environ.get("BRIDGE_URL", "http://127.0.0.1:8787")
+REGISTER_RETRY_INTERVAL = 30.0  # seconds between standalone-mode retries
+DEFAULT_HEARTBEAT_INTERVAL = 15.0
+
+
+def _sanitize_for_id(s: str) -> str:
+    s = s.lower()
+    s = _re.sub(r"[^a-z0-9]+", "-", s)
+    s = _re.sub(r"-+", "-", s).strip("-")
+    return s or "default"
+
+
+def _derive_default_id(cwd: str) -> str:
+    base = _sanitize_for_id(Path(cwd).name)
+    return f"wrapper-{base}"
+
+
+def _id_with_collision_suffix(base_id: str, cwd: str) -> str:
+    h = hashlib.sha1(cwd.encode("utf-8")).hexdigest()[:4]
+    return f"{base_id}-{h}"
+
+
+def pick_free_port() -> int:
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+    finally:
+        s.close()
+
+
+def _http_post(url: str, payload: dict, token: str = "", timeout: float = 3.0) -> tuple:
+    """Return (status_code, json_body). status_code = 0 on transport error."""
+    body = _json.dumps(payload).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = _urlreq.Request(url, data=body, headers=headers, method="POST")
+    try:
+        resp = _urlreq.urlopen(req, timeout=timeout)
+        return resp.status, _json.loads(resp.read().decode("utf-8") or "{}")
+    except _urlerr.HTTPError as e:
+        try:
+            return e.code, _json.loads(e.read().decode("utf-8") or "{}")
+        except Exception:
+            return e.code, {}
+    except Exception:
+        return 0, {}
+
+
+def register_to_bridge(wrapper_id: str, name: str, cwd: str, port: int, pid: int) -> Optional[str]:
+    """Return token on success, None on failure. 409 = id conflict (caller exits)."""
+    status, body = _http_post(
+        f"{BRIDGE_URL}/api/wrappers/register",
+        {"id": wrapper_id, "name": name, "cwd": cwd, "port": port, "pid": pid},
+    )
+    if status == 200:
+        logging.info("registered to bridge id=%s", wrapper_id)
+        return body.get("token", "")
+    if status == 409:
+        logging.error("bridge rejected register: id=%s already online", wrapper_id)
+        sys.stderr.write(f"FATAL: wrapper id '{wrapper_id}' already registered\n")
+        sys.exit(3)
+    logging.warning("register failed (status=%d), entering standalone mode", status)
+    return None
+
+
 CLAUDE_EXE = _find_claude()
 LISTEN_HOST = "127.0.0.1"
-LISTEN_PORT = 8788
 LOG_FILE = Path(__file__).parent / "wrapper.log"
 
 
@@ -217,18 +291,18 @@ def handle_connection(conn: socket.socket, write_func):
     return response
 
 
-def socket_to_pty(proc: PtyProcess, stop_event: threading.Event):
-    """Listen on 127.0.0.1:8788; for each accepted connection, read entire
+def socket_to_pty_on(proc: PtyProcess, port: int, stop_event: threading.Event):
+    """Listen on 127.0.0.1:port; for each accepted connection, read entire
     payload (UTF-8 text), write it + '\\r' to the PTY."""
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    srv.bind((LISTEN_HOST, LISTEN_PORT))
+    srv.bind((LISTEN_HOST, port))
     srv.listen(5)
-    srv.settimeout(0.5)  # so we can periodically check stop_event
-    logging.info("socket listening on %s:%d", LISTEN_HOST, LISTEN_PORT)
+    srv.settimeout(0.5)
+    logging.info("socket listening on %s:%d", LISTEN_HOST, port)
     while not stop_event.is_set() and proc.isalive():
         try:
-            conn, addr = srv.accept()
+            conn, _ = srv.accept()
         except socket.timeout:
             continue
         except OSError as e:
@@ -248,7 +322,6 @@ def socket_to_pty(proc: PtyProcess, stop_event: threading.Event):
     except Exception:
         pass
     stop_event.set()
-    logging.info("socket_to_pty exiting")
 
 
 def kick_tui(proc: PtyProcess):
@@ -261,55 +334,122 @@ def kick_tui(proc: PtyProcess):
         logging.warning("kick err: %s", e)
 
 
-def main():
+def heartbeat_thread(wrapper_id: str, token_holder: dict, stop_event: threading.Event,
+                     interval: float = DEFAULT_HEARTBEAT_INTERVAL):
+    """Send heartbeats while bridge is reachable. On failure, drop token and try
+    to re-register from the registration_loop side."""
+    while not stop_event.is_set():
+        if stop_event.wait(interval):
+            return
+        tok = token_holder.get("token", "")
+        if not tok:
+            continue
+        status, _ = _http_post(
+            f"{BRIDGE_URL}/api/wrappers/heartbeat",
+            {"id": wrapper_id},
+            token=tok,
+        )
+        if status in (401, 403, 404):
+            logging.warning("heartbeat rejected (status=%d), token cleared", status)
+            token_holder["token"] = ""
+        elif status == 0:
+            logging.info("heartbeat transport error; bridge may be restarting")
+            token_holder["token"] = ""
+
+
+def registration_loop(wrapper_id: str, name: str, cwd: str, port: int, pid: int,
+                      token_holder: dict, stop_event: threading.Event,
+                      interval: float = REGISTER_RETRY_INTERVAL):
+    """While token is empty, keep trying to register every `interval` seconds."""
+    while not stop_event.is_set():
+        if not token_holder.get("token"):
+            tok = register_to_bridge(wrapper_id, name, cwd, port, pid)
+            if tok:
+                token_holder["token"] = tok
+        if stop_event.wait(interval):
+            return
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Claude Code wrapper for cc-relay bridge.")
+    p.add_argument("--id", dest="id", default=None, help="explicit wrapper id (default: derive from cwd)")
+    p.add_argument("--name", dest="name", default=None, help="friendly display name (default: basename of cwd)")
+    return p.parse_args()
+
+
+def main() -> None:
     setup_logging()
-    logging.info("starting wrapper; claude=%s", CLAUDE_EXE)
+    args = parse_args()
+
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    wrapper_id = args.id or _derive_default_id(project_root)
+    wrapper_name = args.name or Path(project_root).name
+    wrapper_port = pick_free_port()
+    wrapper_pid = os.getpid()
+
+    print(f"[wrapper] id={wrapper_id} name={wrapper_name} port={wrapper_port}", flush=True)
+    logging.info("wrapper id=%s name=%s port=%d cwd=%s", wrapper_id, wrapper_name, wrapper_port, project_root)
+
+    # Try initial registration. If bridge is down, fall into standalone mode
+    # (claude still hosts locally; registration_loop retries every 30s).
+    token = register_to_bridge(wrapper_id, wrapper_name, project_root, wrapper_port, wrapper_pid) or ""
+    token_holder = {"token": token}
+    if not token:
+        print("[wrapper] WARN bridge offline, running standalone (will retry every 30s)", flush=True)
 
     if not os.path.isfile(CLAUDE_EXE):
         sys.stderr.write(f"FATAL: claude.exe not found at {CLAUDE_EXE}\n")
         sys.exit(2)
 
     set_console_utf8()
-    logging.info("console codepage set to UTF-8 (65001)")
-
     set_console_title(CONSOLE_TITLE)
-    logging.info("console title set to %r", CONSOLE_TITLE)
 
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    # Wrap in cmd /c so we can run `chcp 65001` inside the ConPTY before
-    # claude.exe starts — this switches the child console's input/output code
-    # page to UTF-8, so wrapper-injected UTF-8 bytes are decoded correctly.
+    # Inject env so post_hook.py can include X-Wrapper-Id header
+    env = os.environ.copy()
+    env["WRAPPER_ID"] = wrapper_id
+
     cmd = ["cmd", "/c", f"chcp 65001 >nul && {CLAUDE_EXE}"]
     rows, cols = current_term_size()
-    logging.info("spawn cmdline=%r initial size rows=%d cols=%d", cmd, rows, cols)
-    proc = PtyProcess.spawn(cmd, dimensions=(rows, cols), cwd=project_root)
-    logging.info("spawned claude (via cmd /c chcp 65001) pid=%s cwd=%s", proc.pid, project_root)
+    proc = PtyProcess.spawn(cmd, dimensions=(rows, cols), cwd=project_root, env=env)
+    logging.info("spawned claude pid=%s cwd=%s", proc.pid, project_root)
 
     stop_event = threading.Event()
     threads = [
         threading.Thread(target=pty_to_stdout, name="pty-out", args=(proc, stop_event), daemon=True),
-        threading.Thread(target=stdin_to_pty,  name="stdin-in", args=(proc, stop_event), daemon=True),
-        threading.Thread(target=socket_to_pty, name="sock-in", args=(proc, stop_event), daemon=True),
-        threading.Thread(target=kick_tui,      name="kick", args=(proc,), daemon=True),
+        threading.Thread(target=stdin_to_pty, name="stdin-in", args=(proc, stop_event), daemon=True),
+        threading.Thread(target=lambda: socket_to_pty_on(proc, wrapper_port, stop_event),
+                         name="sock-in", daemon=True),
+        threading.Thread(target=kick_tui, name="kick", args=(proc,), daemon=True),
         threading.Thread(target=resize_watcher, name="resize", args=(proc, stop_event), daemon=True),
         threading.Thread(target=title_keeper, name="title", args=(CONSOLE_TITLE, stop_event), daemon=True),
+        threading.Thread(target=heartbeat_thread, name="hb",
+                         args=(wrapper_id, token_holder, stop_event), daemon=True),
+        threading.Thread(target=registration_loop, name="reg-retry",
+                         args=(wrapper_id, wrapper_name, project_root, wrapper_port, wrapper_pid,
+                               token_holder, stop_event),
+                         daemon=True),
     ]
     for t in threads:
         t.start()
 
-    # Block until PTY dies
     try:
         while proc.isalive():
             time.sleep(0.2)
     except KeyboardInterrupt:
         logging.info("KeyboardInterrupt, terminating PTY")
         try:
-            proc.write("\x03")  # send Ctrl+C to claude first
+            proc.write("\x03")
             time.sleep(0.3)
         except Exception:
             pass
 
     stop_event.set()
+    # Best-effort deregister
+    tok = token_holder.get("token", "")
+    if tok:
+        _http_post(f"{BRIDGE_URL}/api/wrappers/deregister",
+                   {"id": wrapper_id}, token=tok)
+
     try:
         proc.terminate(force=True)
     except Exception:
