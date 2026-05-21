@@ -9,7 +9,7 @@ import secrets
 from pathlib import Path
 
 # auth.py lives in bridge/; hooks/ is one level up at the repo root.
-TOKEN_PATH_WSL = Path(__file__).resolve().parent.parent / "hooks" / ".bridge_token"
+TOKEN_PATH = Path(__file__).resolve().parent.parent / "hooks" / ".bridge_token"
 
 HEADER_NAME = "Authorization"
 HEADER_PREFIX = "Bearer "
@@ -17,16 +17,16 @@ HEADER_PREFIX = "Bearer "
 
 def ensure_token() -> str:
     """Read the persistent token, or generate-and-write one if missing."""
-    if TOKEN_PATH_WSL.exists():
-        existing = TOKEN_PATH_WSL.read_text(encoding="utf-8").strip()
+    if TOKEN_PATH.exists():
+        existing = TOKEN_PATH.read_text(encoding="utf-8").strip()
         if existing:
             return existing
     token = secrets.token_urlsafe(32)
-    TOKEN_PATH_WSL.parent.mkdir(parents=True, exist_ok=True)
-    TOKEN_PATH_WSL.write_text(token, encoding="utf-8")
+    TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+    TOKEN_PATH.write_text(token, encoding="utf-8")
     # 0600 — best-effort; ignored on filesystems that don't support it.
     try:
-        TOKEN_PATH_WSL.chmod(0o600)
+        TOKEN_PATH.chmod(0o600)
     except Exception:
         pass
     return token
