@@ -79,12 +79,23 @@ def create_app(
             raise HTTPException(status_code=400, detail=f"unknown wrapper {x_wrapper_id}")
         return x_wrapper_id
 
+    async def _broadcast_event(event_type: str, payload: HookPayload) -> None:
+        chip, body = _split_prefix(payload.text)
+        project = chip.strip("[] ") if chip else ""
+        await broadcaster.publish({
+            "type": event_type,
+            "project": project,
+            "text": body,
+            "meta": payload.meta,
+        })
+
     @app.post("/hook/user_prompt")
     async def user_prompt(payload: HookPayload,
                           authorization: str = Header(default=""),
                           x_wrapper_id: str = Header(default="")):
         _check_auth(authorization)
         wid = _check_wrapper_id(x_wrapper_id)
+        await _broadcast_event("user_prompt", payload)
         if payload.transcript_path:
             remember_transcript(wid, payload.transcript_path)
         raw = _PROJECT_PREFIX.sub("", payload.text, count=1)
@@ -99,6 +110,7 @@ def create_app(
                               x_wrapper_id: str = Header(default="")):
         _check_auth(authorization)
         wid = _check_wrapper_id(x_wrapper_id)
+        await _broadcast_event("assistant_reply", payload)
         if payload.transcript_path:
             remember_transcript(wid, payload.transcript_path)
         chip, body = _split_prefix(payload.text)
@@ -126,6 +138,7 @@ def create_app(
                        x_wrapper_id: str = Header(default="")):
         _check_auth(authorization)
         wid = _check_wrapper_id(x_wrapper_id)
+        await _broadcast_event("tool_use", payload)
         if is_tool_use_paused(wid):
             return {"ok": True, "skipped": "paused"}
         return _push(feishu, f"🛠️ {payload.text}")
@@ -137,6 +150,7 @@ def create_app(
         _check_auth(authorization)
         wid = _check_wrapper_id(x_wrapper_id)
         # payload.text format: "<action>|<file_path>"
+        # file_touched is internal bookkeeping only — no broadcast
         action, _, fp = payload.text.partition("|")
         files_tracker.record(wid, action.strip() or "?", fp.strip())
         return {"ok": True}
@@ -147,6 +161,8 @@ def create_app(
                          x_wrapper_id: str = Header(default="")):
         _check_auth(authorization)
         _check_wrapper_id(x_wrapper_id)
+        evt_type = "task_created" if payload.task_type == "created" else "task_completed"
+        await _broadcast_event(evt_type, payload)
         if payload.task_type == "created":
             return _push_header_card(feishu, "🆕", "新任务", payload.text, color="green")
         if payload.task_type == "completed":
@@ -159,6 +175,7 @@ def create_app(
                            x_wrapper_id: str = Header(default="")):
         _check_auth(authorization)
         _check_wrapper_id(x_wrapper_id)
+        await _broadcast_event("notification", payload)
         return _push_header_card(feishu, "🔔", "通知", payload.text, color="orange")
 
     @app.post("/hook/bash_result")
@@ -167,6 +184,7 @@ def create_app(
                           x_wrapper_id: str = Header(default="")):
         _check_auth(authorization)
         wid = _check_wrapper_id(x_wrapper_id)
+        await _broadcast_event("bash_result", payload)
         if is_tool_use_paused(wid):
             return {"ok": True, "skipped": "paused"}
         failed = payload.meta == "fail"

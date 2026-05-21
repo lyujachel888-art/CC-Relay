@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 from unittest.mock import MagicMock
 from fastapi.testclient import TestClient
@@ -79,3 +80,44 @@ async def test_events_endpoint_streams_published_events():
             found = True
             break
     assert found, "no SSE data frame received within timeout"
+
+
+async def test_user_prompt_publishes_to_broadcaster():
+    from event_broadcast import EventBroadcaster
+    bc = EventBroadcaster()
+    q = bc.subscribe()
+    app = create_app(MagicMock(), expected_token="T", broadcaster=bc)
+
+    import httpx
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.post(
+            "/hook/user_prompt",
+            json={"text": "[RC] do something"},
+            headers={"Authorization": "Bearer T"},
+        )
+
+    event = await asyncio.wait_for(q.get(), timeout=0.5)
+    assert event["type"] == "user_prompt"
+    assert event["project"] == "RC"
+    assert event["text"] == "do something"
+
+
+async def test_bash_result_publishes_with_fail_meta():
+    from event_broadcast import EventBroadcaster
+    bc = EventBroadcaster()
+    q = bc.subscribe()
+    app = create_app(MagicMock(), expected_token="T", broadcaster=bc)
+
+    import httpx
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.post(
+            "/hook/bash_result",
+            json={"text": "[RC] $ ls\n\nError: not found", "meta": "fail"},
+            headers={"Authorization": "Bearer T"},
+        )
+
+    event = await asyncio.wait_for(q.get(), timeout=0.5)
+    assert event["type"] == "bash_result"
+    assert event["meta"] == "fail"
