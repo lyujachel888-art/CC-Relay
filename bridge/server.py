@@ -37,7 +37,7 @@ class HookPayload(BaseModel):
 
 def create_app(
     feishu: FeishuClient,
-    expected_token: str = "",
+    expected_token: str,
     registry=None,
     router=None,
     broadcaster: EventBroadcaster | None = None,
