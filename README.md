@@ -23,7 +23,37 @@ CC Relay 将 Claude Code 终端与飞书手机端打通，让你在手机上实�
 - Claude Code CLI（`claude` 可执行文件在 PATH）
 - 飞书自建应用（见下方配置）
 
-## 安装
+## 通过 Plugin 安装（推荐）
+
+```powershell
+/plugin marketplace add lyujachel888-art/CC-Relay
+/plugin install cc-relay
+/cc-relay:setup
+```
+
+`/cc-relay:setup` 会自动完成：
+1. 检测 Python / pywinpty / claude.exe
+2. 引导填写飞书 App ID / Secret / Open ID（保存在 `~/.claude/plugins/cc-relay/.env`）
+3. 把 PowerShell shim 写入你的 `$PROFILE`（带版本动态查找，plugin 升级无需重跑 setup）
+4. 冒烟测试一次 bridge
+
+完成后**重开一个 PowerShell 窗口**，在任意项目里：
+
+```powershell
+Enable-ClaudeBridge    # 仅当前窗口启用 wrapper 路由
+cd E:\YourProject
+claude                 # ← Claude 在 YourProject 里启动，并走飞书 bridge
+```
+
+查看健康状态：`/cc-relay:status`
+
+> 仍需要单独启 bridge（一次性，按下方"开发者：直接 clone"一节的方式）。一键合并启动是后续迭代。
+
+---
+
+## 开发者：直接 clone（dev 路径）
+
+### 安装（dev clone）
 
 ```powershell
 # 克隆仓库
@@ -239,7 +269,7 @@ Bridge 首次启动时自动生成随机 token，写入 `hooks/.bridge_token`（
 
 将 `.claude/settings.json` 中的 hooks 配置复制到你的项目 `.claude/settings.json`，或直接使用本仓库根目录作为 Claude Code 的工作目录。
 
-### 启动
+### 启动 bridge & wrapper（dev clone）
 
 ```powershell
 # 终端 1：启动 wrapper（ConPTY 伪终端，托管 Claude Code）
