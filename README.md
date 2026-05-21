@@ -239,17 +239,32 @@ Bridge 首次启动时自动生成随机 token，写入 `hooks/.bridge_token`（
 
 将 `.claude/settings.json` 中的 hooks 配置复制到你的项目 `.claude/settings.json`，或直接使用本仓库根目录作为 Claude Code 的工作目录。
 
-### 启动
+## 启动
 
 ```powershell
-# 终端 1：启动 wrapper（ConPTY 伪终端，托管 Claude Code）
-powershell -ExecutionPolicy Bypass -File scripts\launch_claude_wrapper.ps1
-
-# 终端 2：启动 bridge（FastAPI + 飞书长连接）
+# 终端 1 — bridge（FastAPI + 飞书长连接）
 powershell -ExecutionPolicy Bypass -File scripts\launch_bridge.ps1
+
+# 终端 2 — wrapper（在你要工作的项目目录下运行）
+cd E:\MyProject\YourProject
+powershell -ExecutionPolicy Bypass -File E:\MyProject\RC\scripts\launch_claude_wrapper.ps1
+
+# 同时跑多个项目？在不同项目目录里各自启动 wrapper 即可。wrapper id
+# 默认从 cwd 派生（如 E:\MyProject\RC → wrapper-rc）。撞名时自动追加哈希后缀。
+# 也可显式指定：
+#   .\scripts\launch_claude_wrapper.ps1 -Id custom-id -Name Custom
 ```
 
-启动后飞书会收到一张「🚀 CC Relay 已连接」卡片，点击按钮即可开始使用。
+启动后飞书收到「🚀 CC Relay 已连接」卡片即表示就绪。
+
+## 多 wrapper 切换
+
+| 命令 | 行为 |
+|------|------|
+| `/who` | 显示当前活跃 wrapper |
+| `/switch` | 列出所有已注册 wrapper（标注在线/离线） |
+| `/switch RC` | 切到名为 RC 的 wrapper（不区分大小写） |
+| `/switch wrapper-rc` | 用 id 精确切换 |
 
 ## 命令速查
 
