@@ -3,8 +3,10 @@
 Only tests handle_connection() — no PTY or real socket required.
 Uses a socket.socketpair() for a real in-process byte pipe.
 """
+import os
 import socket
 import sys
+import tempfile
 import threading
 from pathlib import Path
 from unittest.mock import MagicMock, call
@@ -75,9 +77,6 @@ def test_only_crlf_payload_returns_empty():
     assert calls == [], f"expected no write calls, got: {calls}"
     assert response == b"EMPTY\n"
 
-
-import os
-import tempfile
 
 # ---------------------------------------------------------------------------
 # _resolve_cwd tests
