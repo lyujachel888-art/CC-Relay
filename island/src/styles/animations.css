@@ -1,0 +1,45 @@
+/* Priority color variables — applied to a cat container via class .p{N} */
+.p1 { --cm: #EF4444; --cl: #FCA5A5; --cd: #B91C1C; --cg: #EF4444; }
+.p2 { --cm: #F97316; --cl: #FED7AA; --cd: #C2410C; --cg: #F97316; }
+.p3 { --cm: #EAB308; --cl: #FEF08A; --cd: #A16207; --cg: #EAB308; }
+.p4 { --cm: #10B981; --cl: #6EE7B7; --cd: #065F46; --cg: #10B981; }
+.p5 { --cm: #6366F1; --cl: #A5B4FC; --cd: #3730A3; --cg: #6366F1; }
+.p6 { --cm: #8B5CF6; --cl: #C4B5FD; --cd: #5B21B6; --cg: #8B5CF6; }
+.p7 { --cm: #06B6D4; --cl: #A5F3FC; --cd: #0E7490; --cg: #06B6D4; }
+.p8 { --cm: #6B7280; --cl: #9CA3AF; --cd: #374151; --cg: #6B7280; }
+
+/* Inside-SVG class hooks */
+.cat-svg .bm { fill: var(--cm); transition: fill .6s; }
+.cat-svg .bl { fill: var(--cl); transition: fill .6s; }
+.cat-svg .bd { fill: var(--cd); transition: fill .6s; }
+.cat-svg .gl { stroke: var(--cg); transition: stroke .6s; }
+.cat-svg .gf { fill: var(--cg); transition: fill .6s; }
+
+/* Cat motion ── strolling (soft sine) */
+@keyframes stroll {
+  0%, 100% { transform: translateY(0) scaleY(1); }
+  50%      { transform: translateY(-3px) scaleY(1.02); }
+}
+.stroll { animation: stroll 1.8s cubic-bezier(0.37, 0, 0.63, 1) infinite; transform-origin: bottom; }
+
+/* Cat parts — secondary motion */
+@keyframes breathe   { 0%,100% { transform: scaleY(1); } 50% { transform: scaleY(1.04); } }
+@keyframes blink     { 0%,90%,100% { transform: scaleY(1); } 95% { transform: scaleY(.05); } }
+@keyframes tail-sway { 0%,100% { transform: rotate(-2deg); } 50% { transform: rotate(6deg); } }
+@keyframes ear-soft  { 0%,100% { transform: rotate(0); } 50% { transform: rotate(-2deg); } }
+@keyframes zzz       { 0% { transform: translate(0,0); opacity: 1; } 100% { transform: translate(4px,-9px); opacity: 0; } }
+@keyframes paw-l     { 0%,40%,100% { transform: translateY(0); } 20% { transform: translateY(-2px); } }
+@keyframes paw-r     { 0%,20%,60%,100% { transform: translateY(0); } 40% { transform: translateY(-2px); } }
+@keyframes leg-fl    { 0% { transform: rotate(0); } 25% { transform: rotate(28deg); } 50% { transform: rotate(0); } 75% { transform: rotate(-20deg); } 100% { transform: rotate(0); } }
+@keyframes leg-fr    { 0% { transform: rotate(0); } 25% { transform: rotate(-20deg); } 50% { transform: rotate(0); } 75% { transform: rotate(28deg); } 100% { transform: rotate(0); } }
+@keyframes wave-l    { 0%,100% { transform: rotate(0); } 50% { transform: rotate(-15deg); } }
+@keyframes wave-r    { 0%,100% { transform: rotate(0); } 50% { transform: rotate(15deg); } }
+@keyframes fur-pulse { 0%,100% { opacity: .7; transform: scaleY(1); } 50% { opacity: 1; transform: scaleY(1.15); } }
+@keyframes shiver    { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-1px); } 50% { transform: translateX(0); } 75% { transform: translateX(1px); } }
+@keyframes dot-pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+
+/* Error row whole-background pulse */
+@keyframes row-error-pulse {
+  0%,100% { background: rgba(239,68,68,0.06); border-color: rgba(239,68,68,0.18); }
+  50%      { background: rgba(239,68,68,0.16); border-color: rgba(239,68,68,0.45); }
+}

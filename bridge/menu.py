@@ -1,56 +1,32 @@
-"""Phone-friendly slash-command menu.
+"""Phone-friendly slash-command menu, per-wrapper state.
 
-Typing slash commands on a phone keyboard is painful (auto-complete fights you,
-the `/` lives 2 layers deep). This module lets the user just type a keyword
-(`/`, `菜单`, `cmd` …), receive a numbered menu, and then reply with a single
-digit which we translate to the real command.
-"""
+Phase 1 multi-wrapper: each wrapper has its own pending menu bucket so
+switching wrappers mid-menu (or selecting on the wrong project) is safe."""
 
 import time
 from threading import Lock
 from typing import List, Optional
 
-# Common Claude Code slash commands. Adjust freely — only what the user wants
-# to be reachable from the phone.
 COMMANDS: List[str] = [
-    "/clear",
-    "/compact",
-    "/resume",
-    "/model",
-    "/cost",
-    "/help",
-    "/init",
-    "/memory",
-    "/agents",
-    "/mcp",
-    "/config",
-    "/exit",
+    "/clear", "/compact", "/resume", "/model", "/cost", "/help",
+    "/init", "/memory", "/agents", "/mcp", "/config", "/exit",
 ]
 
-# Words that, on their own, open the menu. Kept narrow to avoid false hits on
-# real prompts that happen to start with `?`.
 _TRIGGERS = {"/", "菜单", "命令", "指令", "menu", "cmd", "commands"}
-
 MENU_TTL_SEC = 120.0
+MENU_TITLE = "📋 可用指令"
 
 _lock = Lock()
-_pending: Optional[List[str]] = None
-_pending_until: float = 0.0
+_pending: dict = {}  # wrapper_id -> (commands_list, until_ts)
 
 
 def is_trigger(text: str) -> bool:
     return text.strip().lower() in _TRIGGERS
 
 
-MENU_TITLE = "📋 可用指令"
-
-
 def build_menu_body() -> str:
-    """Markdown body for the menu card — header is set separately."""
-    lines = ["**回复数字注入对应命令**"]
-    lines.append("")
+    lines = ["**回复数字注入对应命令**", ""]
     for i, cmd in enumerate(COMMANDS, 1):
-        # Use `code` styling so commands stand out from the index number.
         lines.append(f"`{i:>2}.`  `{cmd}`")
     lines.append("")
     lines.append(f"*菜单 {int(MENU_TTL_SEC)}s 内有效；其它文字按 prompt 处理*")
@@ -58,33 +34,29 @@ def build_menu_body() -> str:
 
 
 def build_menu_text() -> str:
-    """Plain-text fallback (used when card path is unavailable)."""
-    body = build_menu_body()
-    return f"{MENU_TITLE}\n{body}"
+    return f"{MENU_TITLE}\n{build_menu_body()}"
 
 
-def offer_menu() -> None:
-    """Mark that a menu was just sent — start a TTL window for digit replies."""
-    global _pending, _pending_until
+def offer_menu(wrapper_id: str) -> None:
     with _lock:
-        _pending = list(COMMANDS)
-        _pending_until = time.time() + MENU_TTL_SEC
+        _pending[wrapper_id] = (list(COMMANDS), time.time() + MENU_TTL_SEC)
 
 
-def try_consume_choice(text: str) -> Optional[str]:
-    """If `text` is a digit selecting an entry from the currently-pending
-    menu, return the corresponding command and clear pending state. Else None."""
-    global _pending, _pending_until
+def try_consume_choice(wrapper_id: str, text: str) -> Optional[str]:
     t = text.strip()
     if not t.isdigit():
         return None
     with _lock:
-        if not _pending or time.time() > _pending_until:
-            _pending = None
+        entry = _pending.get(wrapper_id)
+        if not entry:
+            return None
+        cmds, until = entry
+        if not cmds or time.time() > until:
+            _pending.pop(wrapper_id, None)
             return None
         idx = int(t) - 1
-        if not (0 <= idx < len(_pending)):
+        if not (0 <= idx < len(cmds)):
             return None
-        cmd = _pending[idx]
-        _pending = None  # consume — one digit per menu
+        cmd = cmds[idx]
+        _pending.pop(wrapper_id, None)
         return cmd
