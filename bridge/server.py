@@ -27,6 +27,8 @@ log = logging.getLogger("bridge.server")
 # the prompt against the raw text the feishu user typed.
 _PROJECT_PREFIX = re.compile(r"^\[[^\]]+\]\s+")
 
+_TASK_EVENT_MAP = {"created": "task_created", "completed": "task_completed"}
+
 
 class HookPayload(BaseModel):
     text: str
@@ -161,8 +163,9 @@ def create_app(
                          x_wrapper_id: str = Header(default="")):
         _check_auth(authorization)
         _check_wrapper_id(x_wrapper_id)
-        evt_type = "task_created" if payload.task_type == "created" else "task_completed"
-        await _broadcast_event(evt_type, payload)
+        evt_type = _TASK_EVENT_MAP.get(payload.task_type)
+        if evt_type:
+            await _broadcast_event(evt_type, payload)
         if payload.task_type == "created":
             return _push_header_card(feishu, "🆕", "新任务", payload.text, color="green")
         if payload.task_type == "completed":
