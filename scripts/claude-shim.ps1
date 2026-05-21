@@ -1,13 +1,30 @@
 # PowerShell function that overrides `claude` to optionally route through
-# the feishu-bridge wrapper. Toggle per-window with $env:CLAUDE_BRIDGE.
+# the cc-relay wrapper. Toggle per-window with $env:CLAUDE_BRIDGE.
 #
-# Dot-source this file from your $PROFILE to enable:
-#     . "E:\MyProject\RC\scripts\claude-shim.ps1"
-#
-# Or run scripts\install-claude-shim.ps1 once to wire it into $PROFILE.
+# Dot-source this file from your $PROFILE to enable. The cc-relay plugin's
+# /cc-relay:setup command writes a dynamic-version-lookup snippet into your
+# $PROFILE that dot-sources whichever version is currently installed.
 
-$global:ClaudeBridgeWrapperScript = "E:\MyProject\RC\scripts\launch_claude_wrapper.ps1"
-$global:ClaudeBridgeExe           = "C:\Users\Jachel\.local\bin\claude.exe"
+# wrapper launcher path: derived from this script's own location so the shim
+# survives if the CC-Relay repo (or plugin cache version) moves.
+$global:ClaudeBridgeWrapperScript = Join-Path $PSScriptRoot 'launch_claude_wrapper.ps1'
+
+# claude.exe discovery, matching wrapper.py:_find_claude() priority:
+#   1. $env:CLAUDE_EXE (user override)
+#   2. PATH (Get-Command claude.exe)
+#   3. %LOCALAPPDATA%\AnthropicClaude\claude.exe (default install)
+function global:Resolve-ClaudeExe {
+    if ($env:CLAUDE_EXE -and (Test-Path $env:CLAUDE_EXE)) {
+        return $env:CLAUDE_EXE
+    }
+    $cmd = Get-Command claude.exe -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    if ($env:LOCALAPPDATA) {
+        $localCandidate = Join-Path $env:LOCALAPPDATA 'AnthropicClaude\claude.exe'
+        if (Test-Path $localCandidate) { return $localCandidate }
+    }
+    return $null
+}
 
 function global:claude {
     [CmdletBinding()]
@@ -15,24 +32,31 @@ function global:claude {
 
     $on = $env:CLAUDE_BRIDGE
     if ($on -eq '1' -or $on -eq 'on' -or $on -eq 'true') {
-        # Wrapper path. The wrapper currently ignores extra args — surface a
-        # one-line warning if any were passed so the user notices.
+        # Bridge mode: hand off to wrapper. Set CLAUDE_CWD explicitly so the
+        # wrapper spawns claude in the user's current directory.
+        $env:CLAUDE_CWD = (Get-Location).Path
         if ($ArgsForClaude -and $ArgsForClaude.Count -gt 0) {
             Write-Host "[bridge] note: wrapper does not forward args ($ArgsForClaude) yet" -ForegroundColor Yellow
         }
         & $global:ClaudeBridgeWrapperScript
     }
     else {
-        & $global:ClaudeBridgeExe @ArgsForClaude
+        # Native mode: discover claude.exe and run it directly.
+        $exe = Resolve-ClaudeExe
+        if (-not $exe) {
+            Write-Host "[bridge] claude.exe not found. Set `$env:CLAUDE_EXE or add claude to PATH." -ForegroundColor Red
+            return
+        }
+        & $exe @ArgsForClaude
     }
 }
 
 function global:Enable-ClaudeBridge {
     $env:CLAUDE_BRIDGE = '1'
-    Write-Host "[bridge] CLAUDE_BRIDGE=1 — next `claude` will route through wrapper" -ForegroundColor Green
+    Write-Host "[bridge] CLAUDE_BRIDGE=1 — next claude will route through wrapper" -ForegroundColor Green
 }
 
 function global:Disable-ClaudeBridge {
     $env:CLAUDE_BRIDGE = '0'
-    Write-Host "[bridge] CLAUDE_BRIDGE=0 — next `claude` will be native claude.exe" -ForegroundColor Green
+    Write-Host "[bridge] CLAUDE_BRIDGE=0 — next claude will be native claude.exe" -ForegroundColor Green
 }
