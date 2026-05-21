@@ -23,7 +23,7 @@ dev = [
 ]
 
 [project.urls]
-Repository = "https://github.com/jachel-lyu/cc-relay"
+Repository = "https://github.com/lyujachel888-art/CC-Relay"
 
 [tool.pytest.ini_options]
 testpaths = ["bridge/tests"]
