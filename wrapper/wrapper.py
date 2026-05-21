@@ -107,6 +107,24 @@ REGISTER_RETRY_INTERVAL = 30.0  # seconds between standalone-mode retries
 DEFAULT_HEARTBEAT_INTERVAL = 15.0
 
 
+def _resolve_cwd() -> tuple[str, str]:
+    """Pick the cwd the child Claude process should run in.
+
+    Priority:
+      1. $CLAUDE_CWD env var, if it points to an existing dir
+      2. os.getcwd() — the wrapper's own process cwd
+
+    Returns (cwd_path, source_label) where source_label is "env CLAUDE_CWD"
+    or "process cwd" for logging.
+    """
+    env_cwd = os.environ.get("CLAUDE_CWD")
+    if env_cwd and os.path.isdir(env_cwd):
+        return env_cwd, "env CLAUDE_CWD"
+    if env_cwd:
+        logging.warning("CLAUDE_CWD=%r not a directory, ignoring", env_cwd)
+    return os.getcwd(), "process cwd"
+
+
 def _sanitize_for_id(s: str) -> str:
     s = s.lower()
     s = _re.sub(r"[^a-z0-9]+", "-", s)
@@ -390,18 +408,19 @@ def main() -> None:
     setup_logging()
     args = parse_args()
 
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    wrapper_id = args.id or _derive_default_id(project_root)
-    wrapper_name = args.name or Path(project_root).name
+    cwd, cwd_src = _resolve_cwd()
+    wrapper_id = args.id or _derive_default_id(cwd)
+    wrapper_name = args.name or Path(cwd).name
     wrapper_port = pick_free_port()
     wrapper_pid = os.getpid()
 
     print(f"[wrapper] id={wrapper_id} name={wrapper_name} port={wrapper_port}", flush=True)
-    logging.info("wrapper id=%s name=%s port=%d cwd=%s", wrapper_id, wrapper_name, wrapper_port, project_root)
+    logging.info("wrapper id=%s name=%s port=%d cwd=%s (from %s)",
+                 wrapper_id, wrapper_name, wrapper_port, cwd, cwd_src)
 
     # Try initial registration. If bridge is down, fall into standalone mode
     # (claude still hosts locally; registration_loop retries every 30s).
-    token = register_to_bridge(wrapper_id, wrapper_name, project_root, wrapper_port, wrapper_pid) or ""
+    token = register_to_bridge(wrapper_id, wrapper_name, cwd, wrapper_port, wrapper_pid) or ""
     token_holder = {"token": token}
     if not token:
         print("[wrapper] WARN bridge offline, running standalone (will retry every 30s)", flush=True)
@@ -419,10 +438,14 @@ def main() -> None:
     env = os.environ.copy()
     env["WRAPPER_ID"] = wrapper_id
 
+    # Wrap in cmd /c so we can run `chcp 65001` inside the ConPTY before
+    # claude.exe starts — this switches the child console's input/output code
+    # page to UTF-8, so wrapper-injected UTF-8 bytes are decoded correctly.
     cmd = ["cmd", "/c", f"chcp 65001 >nul && {CLAUDE_EXE}"]
     rows, cols = current_term_size()
-    proc = PtyProcess.spawn(cmd, dimensions=(rows, cols), cwd=project_root, env=env)
-    logging.info("spawned claude pid=%s cwd=%s", proc.pid, project_root)
+    logging.info("spawn cmdline=%r initial size rows=%d cols=%d", cmd, rows, cols)
+    proc = PtyProcess.spawn(cmd, dimensions=(rows, cols), cwd=cwd, env=env)
+    logging.info("spawned claude pid=%s cwd=%s", proc.pid, cwd)
 
     stop_event = threading.Event()
     threads = [
@@ -436,7 +459,7 @@ def main() -> None:
         threading.Thread(target=heartbeat_thread, name="hb",
                          args=(wrapper_id, token_holder, stop_event), daemon=True),
         threading.Thread(target=registration_loop, name="reg-retry",
-                         args=(wrapper_id, wrapper_name, project_root, wrapper_port, wrapper_pid,
+                         args=(wrapper_id, wrapper_name, cwd, wrapper_port, wrapper_pid,
                                token_holder, stop_event),
                          daemon=True),
     ]

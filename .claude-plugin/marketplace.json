@@ -1,0 +1,19 @@
+{
+  "name": "cc-relay",
+  "owner": {
+    "name": "jachel.lyu"
+  },
+  "metadata": {
+    "description": "CC Relay - Claude Code <-> Feishu real-time bridge",
+    "version": "0.2.0"
+  },
+  "plugins": [
+    {
+      "name": "cc-relay",
+      "source": "./",
+      "description": "Mobile-Feishu remote control for Claude Code: receive replies, view tool calls, inject prompts. Windows-only.",
+      "category": "automation",
+      "tags": ["feishu", "bridge", "remote", "windows", "conpty"]
+    }
+  ]
+}

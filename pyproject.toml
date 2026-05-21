@@ -1,6 +1,6 @@
 [project]
 name = "cc-relay"
-version = "0.1.0"
+version = "0.2.0"
 description = "Claude Code ↔ Feishu 实时双向中继桥"
 authors = [{ name = "jachel.lyu" }]
 readme = "README.md"
@@ -23,7 +23,7 @@ dev = [
 ]
 
 [project.urls]
-Repository = "https://github.com/jachel-lyu/cc-relay"
+Repository = "https://github.com/lyujachel888-art/CC-Relay"
 
 [tool.pytest.ini_options]
 testpaths = ["bridge/tests"]
