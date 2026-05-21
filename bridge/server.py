@@ -3,16 +3,20 @@ forwards them to Feishu as text messages or interactive cards.
 
 :author: jachel.lyu
 """
+import asyncio
 import hmac
+import json
 import logging
 import re
 
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 import files_tracker
 from auth import HEADER_PREFIX
 from echo_filter import claim_echo
+from event_broadcast import EventBroadcaster
 from feishu import FeishuClient
 from history import remember as remember_transcript
 from push_state import is_tool_use_paused
@@ -23,6 +27,8 @@ log = logging.getLogger("bridge.server")
 # the prompt against the raw text the feishu user typed.
 _PROJECT_PREFIX = re.compile(r"^\[[^\]]+\]\s+")
 
+_TASK_EVENT_MAP = {"created": "task_created", "completed": "task_completed"}
+
 
 class HookPayload(BaseModel):
     text: str
@@ -31,9 +37,24 @@ class HookPayload(BaseModel):
     meta: str = ""             # short meta (e.g. "15.2s · 1137 tok") shown in header
 
 
-def create_app(feishu: FeishuClient, expected_token: str,
-               registry=None, router=None) -> FastAPI:
+def create_app(
+    feishu: FeishuClient,
+    expected_token: str,
+    registry=None,
+    router=None,
+    broadcaster: EventBroadcaster | None = None,
+    sse_idle_timeout: float = 30.0,
+) -> FastAPI:
+    """Create the FastAPI app.
+
+    :param sse_idle_timeout: Seconds to wait for an event before closing the
+        SSE stream and expecting the client to reconnect.  Lower values make
+        the endpoint easier to test synchronously.  Default is 30 s.
+    """
     app = FastAPI()
+    if broadcaster is None:
+        broadcaster = EventBroadcaster()
+    app.state.broadcaster = broadcaster
 
     def _check_auth(authorization: str) -> None:
         """Reject the request if the Authorization header doesn't carry the
@@ -60,12 +81,23 @@ def create_app(feishu: FeishuClient, expected_token: str,
             raise HTTPException(status_code=400, detail=f"unknown wrapper {x_wrapper_id}")
         return x_wrapper_id
 
+    async def _broadcast_event(event_type: str, payload: HookPayload) -> None:
+        chip, body = _split_prefix(payload.text)
+        project = chip.strip("[] ") if chip else ""
+        await broadcaster.publish({
+            "type": event_type,
+            "project": project,
+            "text": body,
+            "meta": payload.meta,
+        })
+
     @app.post("/hook/user_prompt")
     async def user_prompt(payload: HookPayload,
                           authorization: str = Header(default=""),
                           x_wrapper_id: str = Header(default="")):
         _check_auth(authorization)
         wid = _check_wrapper_id(x_wrapper_id)
+        await _broadcast_event("user_prompt", payload)
         if payload.transcript_path:
             remember_transcript(wid, payload.transcript_path)
         raw = _PROJECT_PREFIX.sub("", payload.text, count=1)
@@ -80,6 +112,7 @@ def create_app(feishu: FeishuClient, expected_token: str,
                               x_wrapper_id: str = Header(default="")):
         _check_auth(authorization)
         wid = _check_wrapper_id(x_wrapper_id)
+        await _broadcast_event("assistant_reply", payload)
         if payload.transcript_path:
             remember_transcript(wid, payload.transcript_path)
         chip, body = _split_prefix(payload.text)
@@ -107,6 +140,7 @@ def create_app(feishu: FeishuClient, expected_token: str,
                        x_wrapper_id: str = Header(default="")):
         _check_auth(authorization)
         wid = _check_wrapper_id(x_wrapper_id)
+        await _broadcast_event("tool_use", payload)
         if is_tool_use_paused(wid):
             return {"ok": True, "skipped": "paused"}
         return _push(feishu, f"🛠️ {payload.text}")
@@ -118,6 +152,7 @@ def create_app(feishu: FeishuClient, expected_token: str,
         _check_auth(authorization)
         wid = _check_wrapper_id(x_wrapper_id)
         # payload.text format: "<action>|<file_path>"
+        # file_touched is internal bookkeeping only — no broadcast
         action, _, fp = payload.text.partition("|")
         files_tracker.record(wid, action.strip() or "?", fp.strip())
         return {"ok": True}
@@ -128,6 +163,9 @@ def create_app(feishu: FeishuClient, expected_token: str,
                          x_wrapper_id: str = Header(default="")):
         _check_auth(authorization)
         _check_wrapper_id(x_wrapper_id)
+        evt_type = _TASK_EVENT_MAP.get(payload.task_type)
+        if evt_type:
+            await _broadcast_event(evt_type, payload)
         if payload.task_type == "created":
             return _push_header_card(feishu, "🆕", "新任务", payload.text, color="green")
         if payload.task_type == "completed":
@@ -140,6 +178,7 @@ def create_app(feishu: FeishuClient, expected_token: str,
                            x_wrapper_id: str = Header(default="")):
         _check_auth(authorization)
         _check_wrapper_id(x_wrapper_id)
+        await _broadcast_event("notification", payload)
         return _push_header_card(feishu, "🔔", "通知", payload.text, color="orange")
 
     @app.post("/hook/bash_result")
@@ -148,12 +187,42 @@ def create_app(feishu: FeishuClient, expected_token: str,
                           x_wrapper_id: str = Header(default="")):
         _check_auth(authorization)
         wid = _check_wrapper_id(x_wrapper_id)
+        await _broadcast_event("bash_result", payload)
         if is_tool_use_paused(wid):
             return {"ok": True, "skipped": "paused"}
         failed = payload.meta == "fail"
         color = "red" if failed else "green"
         icon = "❌" if failed else "✅"
         return _push_header_card(feishu, icon, "Bash", payload.text, color=color)
+
+    @app.get("/events")
+    async def events_stream():
+        q = broadcaster.subscribe()
+        async def gen():
+            try:
+                while True:
+                    try:
+                        event = await asyncio.wait_for(
+                            q.get(), timeout=sse_idle_timeout
+                        )
+                    except asyncio.TimeoutError:
+                        # No event within the idle window — close the stream so
+                        # the client can reconnect.  This keeps the generator
+                        # finite, which is required by sync test-clients.
+                        return
+                    data = json.dumps(event, ensure_ascii=False)
+                    yield f"data: {data}\n\n".encode()
+            finally:
+                broadcaster.unsubscribe(q)
+        return StreamingResponse(
+            gen(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-store",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     return app
 
