@@ -4,6 +4,7 @@ import { useDrag } from "./hooks/useDrag";
 import { useSSE } from "./hooks/useSSE";
 import { useSessions } from "./store/sessions";
 import SessionRow from "./components/SessionRow";
+import RecapPanel from "./components/RecapPanel";
 
 export default function App() {
   const hudRef = useRef<HTMLDivElement>(null);
@@ -33,6 +34,7 @@ export default function App() {
         sessions.map((s, i) => (
           <div key={s.project}>
             <SessionRow session={s} />
+            <RecapPanel session={s} />
             {i < sessions.length - 1 && <div className="sep" />}
           </div>
         ))
