@@ -231,3 +231,5 @@ Then tell the user verbatim (with the path substituted):
 >    ```
 >
 > 4. Anytime, check status with /cc-relay:status.
+>
+> **0.2.7+ upgrade note:** bridge routing is now controlled by a per-project `.cc-relay-mode` marker file (instead of the old `$env:CLAUDE_BRIDGE` per-shell var). If you previously used `Enable-ClaudeBridge` to route a shell to bridge, you now need to run `Enable-ClaudeBridge` (or the new `/cc-relay:bridge-enable`) **once per project** to create the marker. The marker persists across shells and CC sessions.
