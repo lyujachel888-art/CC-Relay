@@ -98,6 +98,17 @@ function global:Enable-ClaudeBridge {
 }
 
 function global:Disable-ClaudeBridge {
-    $env:CLAUDE_BRIDGE = '0'
-    Write-Host "[bridge] CLAUDE_BRIDGE=0 — next claude will be native claude.exe" -ForegroundColor Green
+    $root = $null
+    try { $root = (git rev-parse --show-toplevel 2>$null) } catch { }
+    if (-not $root) { $root = (Get-Location).Path }
+    $marker = Join-Path $root '.cc-relay-mode'
+
+    if (Test-Path $marker) {
+        Remove-Item $marker -Force
+        Write-Host "[bridge] bridge DISABLED for project: $root" -ForegroundColor Green
+        Write-Host "[bridge] marker removed: $marker" -ForegroundColor DarkGray
+    } else {
+        Write-Host "[bridge] bridge already disabled (no marker at $marker)" -ForegroundColor DarkGray
+    }
+    Remove-Item env:CLAUDE_BRIDGE -ErrorAction SilentlyContinue
 }
