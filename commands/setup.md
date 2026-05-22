@@ -136,27 +136,37 @@ If the write fails (e.g. profile path read-only): tell user the $PROFILE path an
 
 ## Step 7: Smoke-test bridge (TCP-port probe, not HTTP)
 
-Bridge has no /health endpoint — probe port 8787 instead. The entire smoke test runs in **one** PowerShell process so the PID variable survives across launch/probe/cleanup (Claude's Bash tool starts a fresh shell per command block, so we can't split this across multiple bash blocks).
+Bridge has no /health endpoint — probe port 8787 instead. The entire smoke test runs in **one** PowerShell process so PID variables survive across launch/probe/cleanup (Claude's Bash tool starts a fresh shell per command block, so we can't split this across multiple bash blocks).
+
+Bridge cold-start can take 15-60s (the `lark_oapi` SDK import chain is slow), so probe in a poll loop up to 75s rather than a single fixed sleep. After probing, kill **both** the PowerShell wrapper AND its `python.exe` child — `Stop-Process` on the wrapper does not cascade, leaving an orphaned bridge holding port 8787.
 
 ```bash
 powershell -NoProfile -Command '
 $latestDir = (Get-ChildItem (Join-Path $HOME ".claude\plugins\cache\cc-relay\cc-relay") -Directory | Where-Object { $_.Name -match "^\d+(\.\d+)+$" } | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1).FullName
 $ps1 = Join-Path $latestDir "scripts\launch_bridge.ps1"
 $proc = Start-Process powershell -ArgumentList "-ExecutionPolicy","Bypass","-NoProfile","-File",$ps1 -WindowStyle Hidden -PassThru
-Start-Sleep -Seconds 3
 $result = "FAIL"
-try {
-    $c = New-Object System.Net.Sockets.TcpClient
-    $c.Connect("127.0.0.1", 8787)
-    $c.Close()
-    $result = "OK"
-} catch { }
+$elapsed = 0
+for ($i = 1; $i -le 75; $i++) {
+    Start-Sleep -Seconds 1
+    try {
+        $c = New-Object System.Net.Sockets.TcpClient
+        $c.Connect("127.0.0.1", 8787)
+        $c.Close()
+        $result = "OK"
+        $elapsed = $i
+        break
+    } catch { }
+}
+Get-CimInstance Win32_Process -Filter "name=''python.exe''" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like "*main.py*" -and $_.ParentProcessId -eq $proc.Id } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-Write-Host "smoke=$result pid=$($proc.Id)"
+Write-Host "smoke=$result pid=$($proc.Id) elapsed=${elapsed}s"
 '
 ```
 
-Parse the output line `smoke=OK pid=NNNN` or `smoke=FAIL pid=NNNN`.
+Parse the output line `smoke=OK pid=NNNN elapsed=NNs` or `smoke=FAIL pid=NNNN elapsed=0s`.
 
 If `smoke=OK`: report success and move to Final report.
 
