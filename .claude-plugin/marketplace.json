@@ -5,7 +5,7 @@
   },
   "metadata": {
     "description": "CC Relay - Claude Code <-> Feishu real-time bridge",
-    "version": "0.2.6"
+    "version": "0.2.7"
   },
   "plugins": [
     {

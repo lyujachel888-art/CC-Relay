@@ -9,6 +9,9 @@ __pycache__/
 .env
 .env.local
 
+# CC Relay bridge mode marker (per-project personal config; see README)
+.cc-relay-mode
+
 # IDE
 .vscode/
 .idea/
