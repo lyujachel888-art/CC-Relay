@@ -21,6 +21,7 @@ sys.modules.setdefault("winpty", _winpty_stub)
 # Now import the function under test
 sys.path.insert(0, str(Path(__file__).parent))
 from wrapper import handle_connection
+import wrapper as wrapper_mod
 
 
 # ---------------------------------------------------------------------------
@@ -133,3 +134,52 @@ if __name__ == "__main__":
             failed += 1
     print(f"\n{len(tests) - failed}/{len(tests)} passed")
     sys.exit(failed)
+
+
+# ---------------------------------------------------------------------------
+# register_to_bridge tests (B1+B2 fix)
+# ---------------------------------------------------------------------------
+
+
+def _patch_http_post(monkeypatch, return_value):
+    """Replace wrapper._http_post with a MagicMock returning a fixed (status, body)."""
+    mock = MagicMock(return_value=return_value)
+    monkeypatch.setattr(wrapper_mod, "_http_post", mock)
+    return mock
+
+
+def test_register_returns_ok(monkeypatch):
+    _patch_http_post(monkeypatch, (200, {"token": "T-123"}))
+    kind, tok = wrapper_mod.register_to_bridge("w1", "n1", "/cwd", 1234, 9999)
+    assert kind == "ok"
+    assert tok == "T-123"
+
+
+def test_register_returns_conflict(monkeypatch):
+    _patch_http_post(monkeypatch, (409, {}))
+    kind, tok = wrapper_mod.register_to_bridge("w1", "n1", "/cwd", 1234, 9999)
+    assert kind == "conflict"
+    assert tok is None
+
+
+def test_register_returns_transport_on_zero(monkeypatch):
+    _patch_http_post(monkeypatch, (0, {}))
+    kind, tok = wrapper_mod.register_to_bridge("w1", "n1", "/cwd", 1234, 9999)
+    assert kind == "transport"
+    assert tok is None
+
+
+def test_register_returns_transport_on_5xx(monkeypatch):
+    _patch_http_post(monkeypatch, (500, {}))
+    kind, tok = wrapper_mod.register_to_bridge("w1", "n1", "/cwd", 1234, 9999)
+    assert kind == "transport"
+    assert tok is None
+
+
+def test_register_does_not_exit_on_conflict(monkeypatch):
+    """409 must no longer call sys.exit — caller decides what to do."""
+    _patch_http_post(monkeypatch, (409, {}))
+    # If register_to_bridge calls sys.exit, this test process dies; pytest
+    # would report it as an error, not a passed test.
+    kind, _ = wrapper_mod.register_to_bridge("w1", "n1", "/cwd", 1234, 9999)
+    assert kind == "conflict"
