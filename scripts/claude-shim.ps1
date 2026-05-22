@@ -57,8 +57,8 @@ function global:claude {
     [CmdletBinding()]
     param([Parameter(ValueFromRemainingArguments = $true)] $ArgsForClaude)
 
-    $on = $env:CLAUDE_BRIDGE
-    if ($on -eq '1' -or $on -eq 'on' -or $on -eq 'true') {
+    $mode = Get-CCBridgeMode
+    if ($mode -in 'on','env-on') {
         # Bridge mode: hand off to wrapper. Set CLAUDE_CWD explicitly so the
         # wrapper spawns claude in the user's current directory.
         $env:CLAUDE_CWD = (Get-Location).Path
