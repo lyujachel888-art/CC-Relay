@@ -36,6 +36,36 @@ All PowerShell snippets are wrapped in single-quoted bash strings so `$env:VAR`,
 | `$PROFILE` has shim block | `powershell -NoProfile -Command 'if (Test-Path $PROFILE) { Select-String -Path $PROFILE -Pattern "claude-bridge shim" -Quiet }'` | `True` |
 | `$env:CLAUDE_BRIDGE` value | `powershell -NoProfile -Command '$env:CLAUDE_BRIDGE'` | report value (`1`, `0`, or empty) |
 
+### Bridge mode (current cwd)
+
+Resolve the bridge-mode decision for the user's current working directory. Same logic as `Get-CCBridgeMode` in the shim: env var overrides marker file at project root (`git rev-parse --show-toplevel` ?? `cwd`).
+
+```bash
+powershell -NoProfile -Command '
+$envVal = $env:CLAUDE_BRIDGE
+$root = $null
+try { $root = (git rev-parse --show-toplevel 2>$null) } catch { }
+if (-not $root) { $root = (Get-Location).Path }
+$marker = Join-Path $root ".cc-relay-mode"
+$markerPresent = Test-Path $marker
+
+$mode = "off"
+$source = "default (no marker)"
+if ($envVal -in "1","on","true") { $mode = "on"; $source = "env-var-on" }
+elseif ($envVal -in "0","off","false") { $mode = "off"; $source = "env-var-off" }
+elseif ($markerPresent) { $mode = "on"; $source = "marker-file" }
+
+Write-Output "ROOT:$root"
+Write-Output "MARKER:$marker"
+Write-Output "MARKER_PRESENT:$markerPresent"
+Write-Output "ENV:$envVal"
+Write-Output "MODE:$mode"
+Write-Output "SOURCE:$source"
+'
+```
+
+Capture the 6 output lines and substitute into the Output format below.
+
 ### Runtime path resolution (used by Suggestions)
 
 Before the Runtime checks, resolve the latest plugin install's `launch_bridge.ps1` path. Capture the output line for verbatim substitution into the Suggestions section's "Port 8787 not listening" entry.
@@ -84,6 +114,13 @@ Shim
   $PROFILE has cc-relay block:              ✅
   $env:CLAUDE_BRIDGE current value:         "1"
 
+Bridge mode (current cwd)
+  Project root:          <ROOT value>
+  Marker file:           <MARKER value> (<present|absent>)
+  $env:CLAUDE_BRIDGE:    <ENV value or "(unset)">
+  Mode:                  <MODE>  <✅ if on else ➖>
+  Resolved by:           <SOURCE value>
+
 Runtime
   Port 8787 (bridge HTTP):                  LISTENING (pid 12345)
   Port 8788 (wrapper inject):               LISTENING (pid 67890)
@@ -92,6 +129,8 @@ Runtime
 Suggestions
   ✅ Everything looks good.
 ```
+
+For the Bridge mode block: substitute `<…>` with captured values from the resolution step. When `MARKER_PRESENT` is `True`, show `(present)`; when `False`, show `(absent)`. When `ENV` is empty string, show `(unset)`.
 
 ## Suggestions section
 
