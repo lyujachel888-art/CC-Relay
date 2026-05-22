@@ -79,8 +79,22 @@ function global:claude {
 }
 
 function global:Enable-ClaudeBridge {
-    $env:CLAUDE_BRIDGE = '1'
-    Write-Host "[bridge] CLAUDE_BRIDGE=1 — next claude will route through wrapper" -ForegroundColor Green
+    $root = $null
+    try { $root = (git rev-parse --show-toplevel 2>$null) } catch { }
+    if (-not $root) { $root = (Get-Location).Path }
+    $marker = Join-Path $root '.cc-relay-mode'
+
+    $stamp = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ssK')
+    Set-Content -Path $marker -Value @(
+        '# cc-relay: bridge mode enabled for this project'
+        "# written by Enable-ClaudeBridge at $stamp"
+    ) -Encoding UTF8
+
+    # Clear stale env var to avoid two-source confusion
+    Remove-Item env:CLAUDE_BRIDGE -ErrorAction SilentlyContinue
+
+    Write-Host "[bridge] bridge ENABLED for project: $root" -ForegroundColor Green
+    Write-Host "[bridge] marker: $marker" -ForegroundColor DarkGray
 }
 
 function global:Disable-ClaudeBridge {
