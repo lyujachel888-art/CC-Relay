@@ -69,8 +69,11 @@ function global:Get-CCBridgeMode {
 }
 
 function global:claude {
-    [CmdletBinding()]
-    param([Parameter(ValueFromRemainingArguments = $true)] $ArgsForClaude)
+    # NB: deliberately NO [CmdletBinding()] / param block. PowerShell's strict
+    # parameter parser silently eats single-dash flags like `-p` and treats
+    # `--print` as a parameter name (no such param → bound to nothing). Using
+    # `$args` (the automatic variable in simple functions) captures every
+    # token verbatim — proven by diagnostic comparing both forms.
 
     $mode = Get-CCBridgeMode
     if ($mode -in 'on','env-on') {
@@ -80,11 +83,10 @@ function global:claude {
 
         # Forward args to claude.exe via $env:CLAUDE_ARGS. wrapper.py reads
         # this and appends to the cmd /c string that launches claude. Handles
-        # `claude --dangerously-skip-permissions`, `claude -p "hi"`, etc.
-        # Space-join is fine for simple flags; quotes inside arg strings are
-        # preserved through PS array → env var → Python → cmd /c.
-        if ($ArgsForClaude -and $ArgsForClaude.Count -gt 0) {
-            $env:CLAUDE_ARGS = ($ArgsForClaude -join ' ')
+        # `claude --dangerously-skip-permissions`, `claude --print -p "hi"`,
+        # multi-flag combinations, etc.
+        if ($args -and $args.Count -gt 0) {
+            $env:CLAUDE_ARGS = ($args -join ' ')
         } else {
             Remove-Item env:CLAUDE_ARGS -ErrorAction SilentlyContinue
         }
@@ -103,7 +105,7 @@ function global:claude {
             Write-Host "[bridge] claude.exe not found. Set `$env:CLAUDE_EXE or add claude to PATH." -ForegroundColor Red
             return
         }
-        & $exe @ArgsForClaude
+        & $exe @args
     }
 }
 
