@@ -1,7 +1,7 @@
 {
   "name": "cc-relay",
   "description": "Claude Code <-> Feishu real-time bridge (Windows-only)",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "author": {
     "name": "jachel.lyu"
   },

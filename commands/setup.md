@@ -199,14 +199,29 @@ powershell -NoProfile -Command 'Get-NetTCPConnection -LocalPort 8787 -State List
 
 ## Final report
 
-If all 7 steps pass, tell the user verbatim:
+If all 7 steps pass, first resolve the absolute path of `launch_bridge.ps1` in the latest installed plugin version (so the Next-steps block prints a real path, not a placeholder):
+
+```bash
+powershell -NoProfile -Command '
+$dir = (Get-ChildItem (Join-Path $HOME ".claude\plugins\cache\cc-relay\cc-relay") -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match "^\d+(\.\d+)+$" } |
+        Sort-Object { [version]$_.Name } -Descending |
+        Select-Object -First 1).FullName
+if ($dir) { Write-Output "LAUNCH_BRIDGE:$dir\scripts\launch_bridge.ps1" }
+else      { Write-Output "LAUNCH_BRIDGE:(no plugin install found)" }
+'
+```
+
+Strip the `LAUNCH_BRIDGE:` prefix and substitute the captured path for `<launch-bridge-path>` below.
+
+Then tell the user verbatim (with the path substituted):
 
 > ✅ CC Relay setup complete.
 >
 > **Next steps:**
 > 1. **Close this Claude session and open a fresh PowerShell window** — the $PROFILE shim only loads at PowerShell startup.
 > 2. Start the bridge once per session (in a separate window):
->    powershell -ExecutionPolicy Bypass -File <plugin>\scripts\launch_bridge.ps1
+>    powershell -ExecutionPolicy Bypass -File <launch-bridge-path>
 > 3. In your project window:
 >
 >    ```powershell
