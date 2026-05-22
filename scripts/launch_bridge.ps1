@@ -7,12 +7,16 @@ $BridgeDir = Join-Path $RepoRoot "bridge"
 $Python = Join-Path $BridgeDir ".venv\Scripts\python.exe"
 
 if (-not (Test-Path $Python)) {
-    Write-Host "ERROR: venv not found at $Python" -ForegroundColor Red
-    Write-Host "Run once to set up:" -ForegroundColor Yellow
-    Write-Host "  cd bridge" -ForegroundColor Yellow
-    Write-Host "  python -m venv .venv" -ForegroundColor Yellow
-    Write-Host "  .venv\Scripts\pip install -r requirements.txt" -ForegroundColor Yellow
-    exit 1
+    # No venv — fall back to system Python (plugin install path; handoff §5.6).
+    $sys = Get-Command python -ErrorAction SilentlyContinue
+    if ($sys) {
+        $Python = $sys.Source
+    } else {
+        Write-Host "ERROR: neither bridge/.venv nor 'python' on PATH" -ForegroundColor Red
+        Write-Host "  dev clone:      cd bridge; python -m venv .venv; .venv\Scripts\pip install -r requirements.txt" -ForegroundColor Yellow
+        Write-Host "  plugin install: ensure python is on PATH (/cc-relay:setup Step 3 handles deps)" -ForegroundColor Yellow
+        exit 1
+    }
 }
 
 Set-Location $BridgeDir
