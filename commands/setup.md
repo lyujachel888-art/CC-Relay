@@ -103,12 +103,13 @@ FEISHU_USER_OPEN_ID=<user-provided OPEN_ID>
 
 No trailing whitespace, one key per line, UTF-8 encoded (Write tool default).
 
-## Step 6: Install shim block into PowerShell $PROFILE
+## Step 6: Install shim block into PowerShell profiles (both PS 5.1 and PS 7)
 
-Find the user's $PROFILE path:
-```bash
-powershell -NoProfile -Command '$PROFILE'
-```
+CC Relay supports both Windows PowerShell 5.1 (`powershell.exe`) and PowerShell 7+ (`pwsh.exe`). Each edition has its own `$PROFILE` path — both should receive the shim so users on either edition get the `claude` / `Enable-ClaudeBridge` functions on shell start. (Earlier setup runs wrote only to the 5.1 profile because `powershell -NoProfile -Command '$PROFILE'` always resolves to the 5.1 path, leaving PS 7 users without the shim.)
+
+The two target paths are:
+- PS 5.1: `~/Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1`
+- PS 7+:  `~/Documents/PowerShell/Microsoft.PowerShell_profile.ps1`
 
 The shim block uses a **dynamic-version-lookup** pattern so plugin upgrades don't break it:
 
@@ -122,17 +123,34 @@ if ($ccRelayDir) { . (Join-Path $ccRelayDir "scripts\claude-shim.ps1") }
 # <<< claude-bridge shim <<<
 ```
 
-Read the existing $PROFILE (create empty file if missing) and search for the marker # >>> claude-bridge shim >>>:
+Compute both paths and ensure parent dirs / files exist:
 
-- **No marker present:** append the full block above (with a leading blank line) to $PROFILE.
-- **Marker present:** replace the entire block from # >>> claude-bridge shim >>> through # <<< claude-bridge shim <<< (inclusive) with the new block. This ensures users on older plugin versions get the latest shim logic when they re-run /cc-relay:setup.
-
-Use the Read tool to read the existing $PROFILE content (handle non-existence — empty string then). Then use Write (full file rewrite) or Edit (targeted block replace) to apply the change. If $PROFILE doesn't exist yet, create it first:
 ```bash
-powershell -NoProfile -Command 'if (-not (Test-Path $PROFILE)) { New-Item -ItemType File -Path $PROFILE -Force | Out-Null }'
+powershell -NoProfile -Command '
+$paths = @(
+    (Join-Path $HOME "Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1"),
+    (Join-Path $HOME "Documents\PowerShell\Microsoft.PowerShell_profile.ps1")
+)
+foreach ($p in $paths) {
+    $dir = Split-Path -Parent $p
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    if (-not (Test-Path $p))   { New-Item -ItemType File -Path $p -Force | Out-Null }
+    Write-Output "PROFILE:$p"
+}
+'
 ```
 
-If the write fails (e.g. profile path read-only): tell user the $PROFILE path and the exact block to paste manually, then stop.
+This prints two `PROFILE:<path>` lines. For **each** path independently:
+
+1. Read the file content via the Read tool.
+2. Search for the marker `# >>> claude-bridge shim >>>`.
+3. **Marker present:** replace the entire block from `# >>> claude-bridge shim >>>` through `# <<< claude-bridge shim <<<` (inclusive) with the new block above. Idempotent — ensures users on older plugin versions get the latest shim logic on re-run.
+4. **Marker absent:** append the full shim block above. Prepend a single blank line as separator if the existing file is non-empty.
+5. Use the Write tool (full file rewrite) or Edit tool (targeted block replace) to persist.
+
+If a write fails for one path (e.g. read-only), report the failing path and the exact block for the user to paste manually, then continue with the other path. Do not abort the whole setup on a single profile failure — partial success is still useful.
+
+After both writes, report: "Shim installed to N of 2 profiles" (N = 0, 1, or 2).
 
 ## Step 7: Smoke-test bridge (TCP-port probe, not HTTP)
 
