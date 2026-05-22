@@ -26,6 +26,33 @@ function global:Resolve-ClaudeExe {
     return $null
 }
 
+function global:Get-CCBridgeMode {
+    <#
+    .SYNOPSIS
+    Resolves which bridge mode applies to the current project.
+
+    .DESCRIPTION
+    Returns one of:
+      - 'env-on'  : $env:CLAUDE_BRIDGE is set to a truthy value, overriding marker
+      - 'env-off' : $env:CLAUDE_BRIDGE is set to a falsy value, overriding marker
+      - 'on'      : no env var; marker file present at project root
+      - 'off'     : no env var; no marker file
+
+    Project root is `git rev-parse --show-toplevel` of current directory,
+    falling back to (Get-Location).Path if not in a git repo or git unavailable.
+    #>
+    $envVal = $env:CLAUDE_BRIDGE
+    if ($envVal -in '1','on','true')  { return 'env-on'  }
+    if ($envVal -in '0','off','false') { return 'env-off' }
+
+    $root = $null
+    try { $root = (git rev-parse --show-toplevel 2>$null) } catch { }
+    if (-not $root) { $root = (Get-Location).Path }
+
+    $marker = Join-Path $root '.cc-relay-mode'
+    if (Test-Path $marker) { return 'on' } else { return 'off' }
+}
+
 function global:claude {
     [CmdletBinding()]
     param([Parameter(ValueFromRemainingArguments = $true)] $ArgsForClaude)
