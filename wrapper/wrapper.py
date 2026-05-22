@@ -105,6 +105,10 @@ import urllib.error as _urlerr
 BRIDGE_URL = os.environ.get("BRIDGE_URL", "http://127.0.0.1:8787")
 REGISTER_RETRY_INTERVAL = 30.0  # seconds between standalone-mode retries
 DEFAULT_HEARTBEAT_INTERVAL = 15.0
+# Cooldown after a 409 "already online" — bridge's wrapper_registry uses
+# timeout_sec=30s; wait that plus a small grace before retrying, so the stale
+# entry has definitely been marked offline.
+BRIDGE_CONFLICT_COOLDOWN = 35.0
 
 
 def _resolve_cwd() -> tuple[str, str]:
@@ -402,13 +406,25 @@ def heartbeat_thread(wrapper_id: str, token_holder: dict, stop_event: threading.
 def registration_loop(wrapper_id: str, name: str, cwd: str, port: int, pid: int,
                       token_holder: dict, stop_event: threading.Event,
                       interval: float = REGISTER_RETRY_INTERVAL):
-    """While token is empty, keep trying to register every `interval` seconds."""
+    """While token is empty, keep trying to register.
+
+    Retries every `interval` seconds; backs off to BRIDGE_CONFLICT_COOLDOWN
+    seconds after a 409 conflict to let the bridge's stale entry expire.
+    """
     while not stop_event.is_set():
         if not token_holder.get("token"):
             kind, tok = register_to_bridge(wrapper_id, name, cwd, port, pid)
             if kind == "ok":
-                token_holder["token"] = tok
-        if stop_event.wait(interval):
+                token_holder["token"] = tok or ""
+                wait = interval
+            elif kind == "conflict":
+                logging.warning("bridge 409 conflict on re-register, cooling down %.0fs", BRIDGE_CONFLICT_COOLDOWN)
+                wait = BRIDGE_CONFLICT_COOLDOWN
+            else:  # transport
+                wait = interval
+        else:
+            wait = interval
+        if stop_event.wait(wait):
             return
 
 

@@ -227,3 +227,70 @@ def test_heartbeat_status_200_keeps_token(monkeypatch):
     """status=200 (success) leaves the token intact."""
     token_holder = _run_one_heartbeat_iteration(monkeypatch, (200, {}))
     assert token_holder["token"] == "T-existing"
+
+
+# ---------------------------------------------------------------------------
+# registration_loop tests (B2 fix + 35s cooldown)
+# ---------------------------------------------------------------------------
+
+
+def _run_registration_loop(monkeypatch, register_results, initial_token=""):
+    """Run registration_loop with a sequence of register_to_bridge results.
+    Returns (waits_recorded, final_token_holder)."""
+    # Mock register_to_bridge to return the sequence
+    mock_register = MagicMock(side_effect=register_results)
+    monkeypatch.setattr(wrapper_mod, "register_to_bridge", mock_register)
+
+    token_holder = {"token": initial_token}
+    stop_event = MagicMock()
+    stop_event.is_set.return_value = False
+    # End the loop by making the Nth wait() return True
+    stop_event.wait.side_effect = [False] * (len(register_results) - 1) + [True]
+
+    wrapper_mod.registration_loop(
+        "w1", "n1", "/cwd", 1234, 9999,
+        token_holder, stop_event, interval=30.0,
+    )
+    waits = [c.args[0] for c in stop_event.wait.call_args_list]
+    return waits, token_holder
+
+
+def test_registration_loop_conflict_cooldown(monkeypatch):
+    """409 conflict triggers 35s cooldown instead of standard 30s tick."""
+    waits, token_holder = _run_registration_loop(
+        monkeypatch,
+        [("conflict", None), ("conflict", None), ("ok", "T-new")],
+    )
+    assert waits == [35.0, 35.0, 30.0]
+    assert token_holder["token"] == "T-new"
+
+
+def test_registration_loop_transport_normal_tick(monkeypatch):
+    """Transport errors retry on the standard 30s tick."""
+    waits, token_holder = _run_registration_loop(
+        monkeypatch,
+        [("transport", None), ("transport", None), ("ok", "T-new")],
+    )
+    assert waits == [30.0, 30.0, 30.0]
+    assert token_holder["token"] == "T-new"
+
+
+def test_registration_loop_does_not_register_when_token_present(monkeypatch):
+    """If token is already held, skip the register call and just wait the tick."""
+    mock_register = MagicMock(return_value=("ok", "should-not-be-used"))
+    monkeypatch.setattr(wrapper_mod, "register_to_bridge", mock_register)
+
+    token_holder = {"token": "T-existing"}
+    stop_event = MagicMock()
+    stop_event.is_set.return_value = False
+    stop_event.wait.side_effect = [False, False, True]
+
+    wrapper_mod.registration_loop(
+        "w1", "n1", "/cwd", 1234, 9999,
+        token_holder, stop_event, interval=30.0,
+    )
+
+    assert mock_register.call_count == 0
+    assert token_holder["token"] == "T-existing"
+    waits = [c.args[0] for c in stop_event.wait.call_args_list]
+    assert waits == [30.0, 30.0, 30.0]
