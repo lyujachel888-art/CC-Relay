@@ -1,5 +1,7 @@
 # PowerShell function that overrides `claude` to optionally route through
-# the cc-relay wrapper. Toggle per-window with $env:CLAUDE_BRIDGE.
+# the cc-relay wrapper. Toggle per-project with Enable-ClaudeBridge /
+# Disable-ClaudeBridge (writes .cc-relay-mode marker at project root);
+# override per-shell with $env:CLAUDE_BRIDGE = '1' or '0'.
 #
 # Dot-source this file from your $PROFILE to enable. The cc-relay plugin's
 # /cc-relay:setup command writes a dynamic-version-lookup snippet into your
@@ -26,6 +28,21 @@ function global:Resolve-ClaudeExe {
     return $null
 }
 
+function global:Get-CCProjectRoot {
+    <#
+    .SYNOPSIS
+    Resolves the project root for marker file lookup/write.
+
+    .DESCRIPTION
+    Returns `git rev-parse --show-toplevel` of the current directory, or
+    `(Get-Location).Path` if not in a git repo / git unavailable.
+    #>
+    $root = $null
+    try { $root = (git rev-parse --show-toplevel 2>$null) } catch { }
+    if (-not $root) { $root = (Get-Location).Path }
+    return $root
+}
+
 function global:Get-CCBridgeMode {
     <#
     .SYNOPSIS
@@ -45,9 +62,7 @@ function global:Get-CCBridgeMode {
     if ($envVal -in '1','on','true')  { return 'env-on'  }
     if ($envVal -in '0','off','false') { return 'env-off' }
 
-    $root = $null
-    try { $root = (git rev-parse --show-toplevel 2>$null) } catch { }
-    if (-not $root) { $root = (Get-Location).Path }
+    $root = Get-CCProjectRoot
 
     $marker = Join-Path $root '.cc-relay-mode'
     if (Test-Path $marker) { return 'on' } else { return 'off' }
@@ -79,16 +94,23 @@ function global:claude {
 }
 
 function global:Enable-ClaudeBridge {
-    $root = $null
-    try { $root = (git rev-parse --show-toplevel 2>$null) } catch { }
-    if (-not $root) { $root = (Get-Location).Path }
+    $root = Get-CCProjectRoot
     $marker = Join-Path $root '.cc-relay-mode'
 
     $stamp = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ssK')
-    Set-Content -Path $marker -Value @(
-        '# cc-relay: bridge mode enabled for this project'
-        "# written by Enable-ClaudeBridge at $stamp"
-    ) -Encoding UTF8
+    try {
+        [System.IO.File]::WriteAllLines(
+            $marker,
+            @(
+                '# cc-relay: bridge mode enabled for this project'
+                "# written by Enable-ClaudeBridge at $stamp"
+            ),
+            [System.Text.UTF8Encoding]::new($false)
+        )
+    } catch {
+        Write-Host "[bridge] ERROR: could not write marker $marker — $_" -ForegroundColor Red
+        return
+    }
 
     # Clear stale env var to avoid two-source confusion
     Remove-Item env:CLAUDE_BRIDGE -ErrorAction SilentlyContinue
@@ -98,15 +120,18 @@ function global:Enable-ClaudeBridge {
 }
 
 function global:Disable-ClaudeBridge {
-    $root = $null
-    try { $root = (git rev-parse --show-toplevel 2>$null) } catch { }
-    if (-not $root) { $root = (Get-Location).Path }
+    $root = Get-CCProjectRoot
     $marker = Join-Path $root '.cc-relay-mode'
 
     if (Test-Path $marker) {
-        Remove-Item $marker -Force
-        Write-Host "[bridge] bridge DISABLED for project: $root" -ForegroundColor Green
-        Write-Host "[bridge] marker removed: $marker" -ForegroundColor DarkGray
+        try {
+            Remove-Item $marker -Force -ErrorAction Stop
+            Write-Host "[bridge] bridge DISABLED for project: $root" -ForegroundColor Green
+            Write-Host "[bridge] marker removed: $marker" -ForegroundColor DarkGray
+        } catch {
+            Write-Host "[bridge] ERROR: could not remove marker $marker — $_" -ForegroundColor Red
+            return
+        }
     } else {
         Write-Host "[bridge] bridge already disabled (no marker at $marker)" -ForegroundColor DarkGray
     }
