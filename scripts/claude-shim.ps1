@@ -77,10 +77,24 @@ function global:claude {
         # Bridge mode: hand off to wrapper. Set CLAUDE_CWD explicitly so the
         # wrapper spawns claude in the user's current directory.
         $env:CLAUDE_CWD = (Get-Location).Path
+
+        # Forward args to claude.exe via $env:CLAUDE_ARGS. wrapper.py reads
+        # this and appends to the cmd /c string that launches claude. Handles
+        # `claude --dangerously-skip-permissions`, `claude -p "hi"`, etc.
+        # Space-join is fine for simple flags; quotes inside arg strings are
+        # preserved through PS array → env var → Python → cmd /c.
         if ($ArgsForClaude -and $ArgsForClaude.Count -gt 0) {
-            Write-Host "[bridge] note: wrapper does not forward args ($ArgsForClaude) yet" -ForegroundColor Yellow
+            $env:CLAUDE_ARGS = ($ArgsForClaude -join ' ')
+        } else {
+            Remove-Item env:CLAUDE_ARGS -ErrorAction SilentlyContinue
         }
-        & $global:ClaudeBridgeWrapperScript
+
+        try {
+            & $global:ClaudeBridgeWrapperScript
+        } finally {
+            # Clean up so stale args don't leak into a subsequent `claude` call.
+            Remove-Item env:CLAUDE_ARGS -ErrorAction SilentlyContinue
+        }
     }
     else {
         # Native mode: discover claude.exe and run it directly.
