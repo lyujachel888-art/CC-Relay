@@ -87,6 +87,17 @@ $env:CLAUDE_BRIDGE = '0'   # 这个 shell 后续 claude 强制走 native
 Remove-Item env:CLAUDE_BRIDGE  # 恢复看 marker
 ```
 
+### 给 claude 传 flag（0.2.9+）
+
+bridge 模式下传给 `claude` 的 args 会转发到 wrapper 内的真实 claude.exe：
+
+```powershell
+claude --dangerously-skip-permissions   # bridge 模式下也能用
+claude --print -p "hi"
+```
+
+实现：shim 把 `$ArgsForClaude -join ' '` 写入 `$env:CLAUDE_ARGS`，wrapper.py 读取并拼到 `chcp 65001 && claude.exe <args>` 命令尾。简单 flag 完美工作；复杂嵌套引号（如路径含空格的 `--add-dir`）可能要手动 PowerShell-escape，少见。
+
 ### 建议把 marker 加进 `.gitignore`
 
 `.cc-relay-mode` 是个人偏好（你队友可能没装 cc-relay），通常不入版本。在你的项目 `.gitignore` 加一行：

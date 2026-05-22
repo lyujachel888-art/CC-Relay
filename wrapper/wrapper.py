@@ -441,7 +441,14 @@ def main() -> None:
     # Wrap in cmd /c so we can run `chcp 65001` inside the ConPTY before
     # claude.exe starts — this switches the child console's input/output code
     # page to UTF-8, so wrapper-injected UTF-8 bytes are decoded correctly.
-    cmd = ["cmd", "/c", f"chcp 65001 >nul && {CLAUDE_EXE}"]
+    # $CLAUDE_ARGS is set by claude-shim.ps1 when the user passes flags like
+    # `claude --dangerously-skip-permissions`. Empty / unset = no extra args.
+    claude_args = os.environ.get("CLAUDE_ARGS", "").strip()
+    if claude_args:
+        logging.info("claude_args from env: %r", claude_args)
+        cmd = ["cmd", "/c", f"chcp 65001 >nul && {CLAUDE_EXE} {claude_args}"]
+    else:
+        cmd = ["cmd", "/c", f"chcp 65001 >nul && {CLAUDE_EXE}"]
     rows, cols = current_term_size()
     logging.info("spawn cmdline=%r initial size rows=%d cols=%d", cmd, rows, cols)
     proc = PtyProcess.spawn(cmd, dimensions=(rows, cols), cwd=cwd, env=env)
