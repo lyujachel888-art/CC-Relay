@@ -252,7 +252,7 @@ powershell -ExecutionPolicy Bypass -File E:\MyProject\RC\scripts\launch_claude_w
 #   .\scripts\launch_claude_wrapper.ps1 -Id custom-id -Name Custom
 ```
 
-启动后飞书收到「🚀 CC Relay 已连接」卡片即表示就绪。
+启动后飞书收到「🚀 渡桥 已就绪」卡片即表示就绪。
 
 ---
 

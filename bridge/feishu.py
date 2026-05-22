@@ -405,7 +405,7 @@ class FeishuClient:
             "schema": "2.0",
             "config": {"wide_screen_mode": True},
             "header": {
-                "title": {"tag": "plain_text", "content": "🚀 CC Relay 已连接"},
+                "title": {"tag": "plain_text", "content": "🚀 渡桥 已就绪"},
                 "template": "green",
             },
             "body": {
