@@ -85,8 +85,14 @@ function global:claude {
         # this and appends to the cmd /c string that launches claude. Handles
         # `claude --dangerously-skip-permissions`, `claude --print -p "hi"`,
         # multi-flag combinations, etc.
+        # IMPORTANT: re-quote args containing whitespace (e.g. a `-p "请用 Bash ..."`
+        # prompt). cmd /c re-parses on spaces, so a naked join would split
+        # multi-word prompts back into multiple positional args.
         if ($args -and $args.Count -gt 0) {
-            $env:CLAUDE_ARGS = ($args -join ' ')
+            $quoted = $args | ForEach-Object {
+                if ($_ -match '\s') { '"' + $_ + '"' } else { $_ }
+            }
+            $env:CLAUDE_ARGS = ($quoted -join ' ')
         } else {
             Remove-Item env:CLAUDE_ARGS -ErrorAction SilentlyContinue
         }

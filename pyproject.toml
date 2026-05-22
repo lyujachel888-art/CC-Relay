@@ -1,6 +1,6 @@
 [project]
 name = "cc-relay"
-version = "0.2.10"
+version = "0.2.11"
 description = "Claude Code ↔ Feishu 实时双向中继桥"
 authors = [{ name = "jachel.lyu" }]
 readme = "README.md"
