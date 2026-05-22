@@ -374,8 +374,12 @@ def kick_tui(proc: PtyProcess):
 
 def heartbeat_thread(wrapper_id: str, token_holder: dict, stop_event: threading.Event,
                      interval: float = DEFAULT_HEARTBEAT_INTERVAL):
-    """Send heartbeats while bridge is reachable. On failure, drop token and try
-    to re-register from the registration_loop side."""
+    """Send heartbeats while bridge is reachable.
+
+    On explicit rejection (401/403/404), clear the token so registration_loop
+    re-registers. On transport error (status=0), log and retry next tick — the
+    request may already have reached bridge, so keep the token to avoid an
+    unnecessary re-register race against bridge's heartbeat timeout."""
     while not stop_event.is_set():
         if stop_event.wait(interval):
             return
@@ -391,8 +395,8 @@ def heartbeat_thread(wrapper_id: str, token_holder: dict, stop_event: threading.
             logging.warning("heartbeat rejected (status=%d), token cleared", status)
             token_holder["token"] = ""
         elif status == 0:
-            logging.info("heartbeat transport error; bridge may be restarting")
-            token_holder["token"] = ""
+            logging.info("heartbeat transport error; ignoring, will retry next tick")
+        # status == 200 → no-op (last_seen refreshed on bridge side)
 
 
 def registration_loop(wrapper_id: str, name: str, cwd: str, port: int, pid: int,

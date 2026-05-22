@@ -183,3 +183,47 @@ def test_register_does_not_exit_on_conflict(monkeypatch):
     # would report it as an error, not a passed test.
     kind, _ = wrapper_mod.register_to_bridge("w1", "n1", "/cwd", 1234, 9999)
     assert kind == "conflict"
+
+
+# ---------------------------------------------------------------------------
+# heartbeat_thread tests (B1 fix)
+# ---------------------------------------------------------------------------
+
+
+def _run_one_heartbeat_iteration(monkeypatch, http_return):
+    """Run heartbeat_thread for exactly one iteration with mocked _http_post.
+    Returns the token_holder dict after the iteration."""
+    _patch_http_post(monkeypatch, http_return)
+
+    token_holder = {"token": "T-existing"}
+    stop_event = MagicMock()
+    # First wait() returns False (proceed to send heartbeat); second returns True (exit loop)
+    stop_event.is_set.return_value = False
+    stop_event.wait.side_effect = [False, True]
+
+    wrapper_mod.heartbeat_thread("w1", token_holder, stop_event, interval=0.0)
+    return token_holder
+
+
+def test_heartbeat_status_0_keeps_token(monkeypatch):
+    """status=0 (transport error / slow response) must NOT clear the token."""
+    token_holder = _run_one_heartbeat_iteration(monkeypatch, (0, {}))
+    assert token_holder["token"] == "T-existing"
+
+
+def test_heartbeat_status_404_clears_token(monkeypatch):
+    """status=404 (bridge forgot us, e.g. after restart) clears the token."""
+    token_holder = _run_one_heartbeat_iteration(monkeypatch, (404, {}))
+    assert token_holder["token"] == ""
+
+
+def test_heartbeat_status_401_clears_token(monkeypatch):
+    """status=401 (bad token) clears the token."""
+    token_holder = _run_one_heartbeat_iteration(monkeypatch, (401, {}))
+    assert token_holder["token"] == ""
+
+
+def test_heartbeat_status_200_keeps_token(monkeypatch):
+    """status=200 (success) leaves the token intact."""
+    token_holder = _run_one_heartbeat_iteration(monkeypatch, (200, {}))
+    assert token_holder["token"] == "T-existing"
