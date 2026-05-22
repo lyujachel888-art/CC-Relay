@@ -11,17 +11,25 @@ The "project root" is `git rev-parse --show-toplevel` of the current working dir
 
 ```bash
 powershell -NoProfile -Command '
+# standalone — shim not loaded in Bash subshell, so resolve root inline
 $root = $null
 try { $root = (git rev-parse --show-toplevel 2>$null) } catch { }
 if (-not $root) { $root = (Get-Location).Path }
 $marker = Join-Path $root ".cc-relay-mode"
 $stamp = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ssK")
-Set-Content -Path $marker -Value @(
-    "# cc-relay: bridge mode enabled for this project"
-    "# written by /cc-relay:bridge-enable at $stamp"
-) -Encoding UTF8
-if (Test-Path $marker) { Write-Output "OK MARKER:$marker ROOT:$root" }
-else { Write-Output "FAIL_WRITE MARKER:$marker ROOT:$root" }
+try {
+    [System.IO.File]::WriteAllLines(
+        $marker,
+        @(
+            "# cc-relay: bridge mode enabled for this project"
+            "# written by /cc-relay:bridge-enable at $stamp"
+        ),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    Write-Output "OK MARKER:$marker ROOT:$root"
+} catch {
+    Write-Output "FAIL_WRITE MARKER:$marker ROOT:$root ERR:$_"
+}
 '
 ```
 

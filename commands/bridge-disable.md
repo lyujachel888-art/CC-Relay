@@ -11,6 +11,7 @@ The "project root" is `git rev-parse --show-toplevel` of the current working dir
 
 ```bash
 powershell -NoProfile -Command '
+# standalone — shim not loaded in Bash subshell, so resolve root inline
 $root = $null
 try { $root = (git rev-parse --show-toplevel 2>$null) } catch { }
 if (-not $root) { $root = (Get-Location).Path }
