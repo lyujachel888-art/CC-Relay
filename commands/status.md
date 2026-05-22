@@ -36,6 +36,23 @@ All PowerShell snippets are wrapped in single-quoted bash strings so `$env:VAR`,
 | `$PROFILE` has shim block | `powershell -NoProfile -Command 'if (Test-Path $PROFILE) { Select-String -Path $PROFILE -Pattern "claude-bridge shim" -Quiet }'` | `True` |
 | `$env:CLAUDE_BRIDGE` value | `powershell -NoProfile -Command '$env:CLAUDE_BRIDGE'` | report value (`1`, `0`, or empty) |
 
+### Runtime path resolution (used by Suggestions)
+
+Before the Runtime checks, resolve the latest plugin install's `launch_bridge.ps1` path. Capture the output line for verbatim substitution into the Suggestions section's "Port 8787 not listening" entry.
+
+```bash
+powershell -NoProfile -Command '
+$dir = (Get-ChildItem (Join-Path $HOME ".claude\plugins\cache\cc-relay\cc-relay") -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match "^\d+(\.\d+)+$" } |
+        Sort-Object { [version]$_.Name } -Descending |
+        Select-Object -First 1).FullName
+if ($dir) { Write-Output "LAUNCH_BRIDGE:$dir\scripts\launch_bridge.ps1" }
+else      { Write-Output "LAUNCH_BRIDGE:(no plugin install found)" }
+'
+```
+
+Strip the `LAUNCH_BRIDGE:` prefix and remember the path. If "(no plugin install found)" — the user is in dev-clone mode; use `E:\path\to\repo\scripts\launch_bridge.ps1` as a placeholder in the suggestion instead.
+
 ### Runtime
 
 | Check | Command | Pass criteria |
@@ -88,7 +105,7 @@ For each ❌ row, add a one-line suggestion under "Suggestions":
 | claude.exe missing | "Install Claude Code (https://claude.com/code), then re-run /cc-relay:setup" |
 | .env missing or incomplete | "Run /cc-relay:setup to configure Feishu credentials" |
 | $PROFILE missing shim | "Run /cc-relay:setup to install the shim into your PowerShell profile" |
-| Port 8787 not listening | "Bridge not running. Start with: powershell -ExecutionPolicy Bypass -File <plugin>/scripts/launch_bridge.ps1" |
+| Port 8787 not listening | "Bridge not running. Start with: powershell -ExecutionPolicy Bypass -File <captured LAUNCH_BRIDGE path from Runtime path resolution above>" |
 | Port 8788 not listening | "Wrapper not running. Open a PowerShell, Enable-ClaudeBridge, then claude" |
 | Console window absent | "No wrapper window with title '云匣-*' found — same as port 8788 case" |
 
