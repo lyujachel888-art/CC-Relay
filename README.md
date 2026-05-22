@@ -53,6 +53,49 @@ claude                 # ← Claude 在 YourProject 里启动，并走飞书 bri
 
 ---
 
+## Bridge mode per project（0.2.7+）
+
+`cc-relay` 的 bridge 路由是**每项目独立配置**的，靠项目根的 `.cc-relay-mode` marker 文件控制：
+
+- 文件存在 → 这个项目走 bridge（飞书 hook 推送、wrapper 接管）
+- 文件不存在 → 这个项目走 native claude（默认）
+
+项目根 = `git rev-parse --show-toplevel`，没 git 就用 cwd。
+
+### 切换某个项目的 bridge 模式
+
+**在 Claude Code 会话里（推荐）：**
+```
+/cc-relay:bridge-enable    # 为当前项目开启 bridge 模式
+/cc-relay:bridge-disable   # 关闭
+```
+
+**在 PowerShell 里：**
+```powershell
+cd E:\YourProject
+Enable-ClaudeBridge       # 创建 marker
+Disable-ClaudeBridge      # 删除 marker
+```
+
+两套命令等价，都是写/删同一个 marker 文件。
+
+### Escape hatch：单 shell 临时 override
+
+```powershell
+$env:CLAUDE_BRIDGE = '1'   # 这个 shell 后续 claude 强制走 bridge（无视 marker）
+$env:CLAUDE_BRIDGE = '0'   # 这个 shell 后续 claude 强制走 native
+Remove-Item env:CLAUDE_BRIDGE  # 恢复看 marker
+```
+
+### 建议把 marker 加进 `.gitignore`
+
+`.cc-relay-mode` 是个人偏好（你队友可能没装 cc-relay），通常不入版本。在你的项目 `.gitignore` 加一行：
+```
+.cc-relay-mode
+```
+
+---
+
 ## 开发者：直接 clone（dev 路径）
 
 ### 安装（dev clone）
