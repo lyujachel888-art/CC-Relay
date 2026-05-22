@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python $CLAUDE_PROJECT_DIR/hooks/post_hook.py user_prompt"
+            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/post_hook.py\" user_prompt"
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python $CLAUDE_PROJECT_DIR/hooks/post_hook.py stop"
+            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/post_hook.py\" stop"
           }
         ]
       }
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python $CLAUDE_PROJECT_DIR/hooks/post_hook.py pre_tool"
+            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/post_hook.py\" pre_tool"
           }
         ]
       }
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python $CLAUDE_PROJECT_DIR/hooks/post_hook.py post_tool"
+            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/post_hook.py\" post_tool"
           }
         ]
       },
@@ -48,7 +48,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python $CLAUDE_PROJECT_DIR/hooks/post_hook.py post_bash"
+            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/post_hook.py\" post_bash"
           }
         ]
       }
@@ -59,7 +59,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python $CLAUDE_PROJECT_DIR/hooks/post_hook.py notification"
+            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/post_hook.py\" notification"
           }
         ]
       }
@@ -70,7 +70,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python $CLAUDE_PROJECT_DIR/hooks/post_hook.py task_created"
+            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/post_hook.py\" task_created"
           }
         ]
       }
@@ -81,7 +81,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python $CLAUDE_PROJECT_DIR/hooks/post_hook.py task_completed"
+            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/post_hook.py\" task_completed"
           }
         ]
       }
