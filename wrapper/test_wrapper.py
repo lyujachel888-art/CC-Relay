@@ -21,6 +21,7 @@ sys.modules.setdefault("winpty", _winpty_stub)
 # Now import the function under test
 sys.path.insert(0, str(Path(__file__).parent))
 from wrapper import handle_connection
+import wrapper as wrapper_mod
 
 
 # ---------------------------------------------------------------------------
@@ -133,3 +134,163 @@ if __name__ == "__main__":
             failed += 1
     print(f"\n{len(tests) - failed}/{len(tests)} passed")
     sys.exit(failed)
+
+
+# ---------------------------------------------------------------------------
+# register_to_bridge tests (B1+B2 fix)
+# ---------------------------------------------------------------------------
+
+
+def _patch_http_post(monkeypatch, return_value):
+    """Replace wrapper._http_post with a MagicMock returning a fixed (status, body)."""
+    mock = MagicMock(return_value=return_value)
+    monkeypatch.setattr(wrapper_mod, "_http_post", mock)
+    return mock
+
+
+def test_register_returns_ok(monkeypatch):
+    _patch_http_post(monkeypatch, (200, {"token": "T-123"}))
+    kind, tok = wrapper_mod.register_to_bridge("w1", "n1", "/cwd", 1234, 9999)
+    assert kind == "ok"
+    assert tok == "T-123"
+
+
+def test_register_returns_conflict(monkeypatch):
+    _patch_http_post(monkeypatch, (409, {}))
+    kind, tok = wrapper_mod.register_to_bridge("w1", "n1", "/cwd", 1234, 9999)
+    assert kind == "conflict"
+    assert tok is None
+
+
+def test_register_returns_transport_on_zero(monkeypatch):
+    _patch_http_post(monkeypatch, (0, {}))
+    kind, tok = wrapper_mod.register_to_bridge("w1", "n1", "/cwd", 1234, 9999)
+    assert kind == "transport"
+    assert tok is None
+
+
+def test_register_returns_transport_on_5xx(monkeypatch):
+    _patch_http_post(monkeypatch, (500, {}))
+    kind, tok = wrapper_mod.register_to_bridge("w1", "n1", "/cwd", 1234, 9999)
+    assert kind == "transport"
+    assert tok is None
+
+
+def test_register_does_not_exit_on_conflict(monkeypatch):
+    """409 must no longer call sys.exit — caller decides what to do."""
+    _patch_http_post(monkeypatch, (409, {}))
+    # If register_to_bridge calls sys.exit, this test process dies; pytest
+    # would report it as an error, not a passed test.
+    kind, _ = wrapper_mod.register_to_bridge("w1", "n1", "/cwd", 1234, 9999)
+    assert kind == "conflict"
+
+
+# ---------------------------------------------------------------------------
+# heartbeat_thread tests (B1 fix)
+# ---------------------------------------------------------------------------
+
+
+def _run_one_heartbeat_iteration(monkeypatch, http_return):
+    """Run heartbeat_thread for exactly one iteration with mocked _http_post.
+    Returns the token_holder dict after the iteration."""
+    _patch_http_post(monkeypatch, http_return)
+
+    token_holder = {"token": "T-existing"}
+    stop_event = MagicMock()
+    # First wait() returns False (proceed to send heartbeat); second returns True (exit loop)
+    stop_event.is_set.return_value = False
+    stop_event.wait.side_effect = [False, True]
+
+    wrapper_mod.heartbeat_thread("w1", token_holder, stop_event, interval=0.0)
+    return token_holder
+
+
+def test_heartbeat_status_0_keeps_token(monkeypatch):
+    """status=0 (transport error / slow response) must NOT clear the token."""
+    token_holder = _run_one_heartbeat_iteration(monkeypatch, (0, {}))
+    assert token_holder["token"] == "T-existing"
+
+
+def test_heartbeat_status_404_clears_token(monkeypatch):
+    """status=404 (bridge forgot us, e.g. after restart) clears the token."""
+    token_holder = _run_one_heartbeat_iteration(monkeypatch, (404, {}))
+    assert token_holder["token"] == ""
+
+
+def test_heartbeat_status_401_clears_token(monkeypatch):
+    """status=401 (bad token) clears the token."""
+    token_holder = _run_one_heartbeat_iteration(monkeypatch, (401, {}))
+    assert token_holder["token"] == ""
+
+
+def test_heartbeat_status_200_keeps_token(monkeypatch):
+    """status=200 (success) leaves the token intact."""
+    token_holder = _run_one_heartbeat_iteration(monkeypatch, (200, {}))
+    assert token_holder["token"] == "T-existing"
+
+
+# ---------------------------------------------------------------------------
+# registration_loop tests (B2 fix + 35s cooldown)
+# ---------------------------------------------------------------------------
+
+
+def _run_registration_loop(monkeypatch, register_results, initial_token=""):
+    """Run registration_loop with a sequence of register_to_bridge results.
+    Returns (waits_recorded, final_token_holder)."""
+    # Mock register_to_bridge to return the sequence
+    mock_register = MagicMock(side_effect=register_results)
+    monkeypatch.setattr(wrapper_mod, "register_to_bridge", mock_register)
+
+    token_holder = {"token": initial_token}
+    stop_event = MagicMock()
+    stop_event.is_set.return_value = False
+    # End the loop by making the Nth wait() return True
+    stop_event.wait.side_effect = [False] * (len(register_results) - 1) + [True]
+
+    wrapper_mod.registration_loop(
+        "w1", "n1", "/cwd", 1234, 9999,
+        token_holder, stop_event, interval=30.0,
+    )
+    waits = [c.args[0] for c in stop_event.wait.call_args_list]
+    return waits, token_holder
+
+
+def test_registration_loop_conflict_cooldown(monkeypatch):
+    """409 conflict triggers 35s cooldown instead of standard 30s tick."""
+    waits, token_holder = _run_registration_loop(
+        monkeypatch,
+        [("conflict", None), ("conflict", None), ("ok", "T-new")],
+    )
+    assert waits == [35.0, 35.0, 30.0]
+    assert token_holder["token"] == "T-new"
+
+
+def test_registration_loop_transport_normal_tick(monkeypatch):
+    """Transport errors retry on the standard 30s tick."""
+    waits, token_holder = _run_registration_loop(
+        monkeypatch,
+        [("transport", None), ("transport", None), ("ok", "T-new")],
+    )
+    assert waits == [30.0, 30.0, 30.0]
+    assert token_holder["token"] == "T-new"
+
+
+def test_registration_loop_does_not_register_when_token_present(monkeypatch):
+    """If token is already held, skip the register call and just wait the tick."""
+    mock_register = MagicMock(return_value=("ok", "should-not-be-used"))
+    monkeypatch.setattr(wrapper_mod, "register_to_bridge", mock_register)
+
+    token_holder = {"token": "T-existing"}
+    stop_event = MagicMock()
+    stop_event.is_set.return_value = False
+    stop_event.wait.side_effect = [False, False, True]
+
+    wrapper_mod.registration_loop(
+        "w1", "n1", "/cwd", 1234, 9999,
+        token_holder, stop_event, interval=30.0,
+    )
+
+    assert mock_register.call_count == 0
+    assert token_holder["token"] == "T-existing"
+    waits = [c.args[0] for c in stop_event.wait.call_args_list]
+    assert waits == [30.0, 30.0, 30.0]

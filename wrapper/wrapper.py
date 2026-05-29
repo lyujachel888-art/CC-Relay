@@ -12,7 +12,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional, Tuple
 
 from winpty import PtyProcess
 
@@ -105,6 +105,10 @@ import urllib.error as _urlerr
 BRIDGE_URL = os.environ.get("BRIDGE_URL", "http://127.0.0.1:8787")
 REGISTER_RETRY_INTERVAL = 30.0  # seconds between standalone-mode retries
 DEFAULT_HEARTBEAT_INTERVAL = 15.0
+# Cooldown after a 409 "already online" — bridge's wrapper_registry uses
+# timeout_sec=30s; wait that plus a small grace before retrying, so the stale
+# entry has definitely been marked offline.
+BRIDGE_CONFLICT_COOLDOWN = 35.0
 
 
 def _resolve_cwd() -> tuple[str, str]:
@@ -177,21 +181,32 @@ def _http_post(url: str, payload: dict, token: str = "", timeout: float = 3.0) -
         return 0, {}
 
 
-def register_to_bridge(wrapper_id: str, name: str, cwd: str, port: int, pid: int) -> Optional[str]:
-    """Return token on success, None on failure. 409 = id conflict (caller exits)."""
+RegisterResult = Tuple[Literal["ok", "conflict", "transport"], Optional[str]]
+
+
+def register_to_bridge(wrapper_id: str, name: str, cwd: str, port: int, pid: int) -> RegisterResult:
+    """Try to register with the bridge.
+
+    Returns (kind, token_or_none):
+      - ("ok", token)        → status 200, store token, start heartbeating
+      - ("conflict", None)   → status 409, caller decides (main: FATAL exit;
+                               registration_loop: 35s cooldown then retry)
+      - ("transport", None)  → status 0 (network) / 5xx / other; treat as
+                               transient and retry on the standard tick
+    No side-effects beyond logging — never calls sys.exit.
+    """
     status, body = _http_post(
         f"{BRIDGE_URL}/api/wrappers/register",
         {"id": wrapper_id, "name": name, "cwd": cwd, "port": port, "pid": pid},
     )
     if status == 200:
         logging.info("registered to bridge id=%s", wrapper_id)
-        return body.get("token", "")
+        return ("ok", body.get("token", ""))
     if status == 409:
-        logging.error("bridge rejected register: id=%s already online", wrapper_id)
-        sys.stderr.write(f"FATAL: wrapper id '{wrapper_id}' already registered\n")
-        sys.exit(3)
-    logging.warning("register failed (status=%d), entering standalone mode", status)
-    return None
+        logging.warning("bridge rejected register: id=%s already online", wrapper_id)
+        return ("conflict", None)
+    logging.warning("register failed (status=%d)", status)
+    return ("transport", None)
 
 
 CLAUDE_EXE = _find_claude()
@@ -363,8 +378,12 @@ def kick_tui(proc: PtyProcess):
 
 def heartbeat_thread(wrapper_id: str, token_holder: dict, stop_event: threading.Event,
                      interval: float = DEFAULT_HEARTBEAT_INTERVAL):
-    """Send heartbeats while bridge is reachable. On failure, drop token and try
-    to re-register from the registration_loop side."""
+    """Send heartbeats while bridge is reachable.
+
+    On explicit rejection (401/403/404), clear the token so registration_loop
+    re-registers. On transport error (status=0), log and retry next tick — the
+    request may already have reached bridge, so keep the token to avoid an
+    unnecessary re-register race against bridge's heartbeat timeout."""
     while not stop_event.is_set():
         if stop_event.wait(interval):
             return
@@ -380,20 +399,32 @@ def heartbeat_thread(wrapper_id: str, token_holder: dict, stop_event: threading.
             logging.warning("heartbeat rejected (status=%d), token cleared", status)
             token_holder["token"] = ""
         elif status == 0:
-            logging.info("heartbeat transport error; bridge may be restarting")
-            token_holder["token"] = ""
+            logging.info("heartbeat transport error; ignoring, will retry next tick")
+        # status == 200 → no-op (last_seen refreshed on bridge side)
 
 
 def registration_loop(wrapper_id: str, name: str, cwd: str, port: int, pid: int,
                       token_holder: dict, stop_event: threading.Event,
                       interval: float = REGISTER_RETRY_INTERVAL):
-    """While token is empty, keep trying to register every `interval` seconds."""
+    """While token is empty, keep trying to register.
+
+    Retries every `interval` seconds; backs off to BRIDGE_CONFLICT_COOLDOWN
+    seconds after a 409 conflict to let the bridge's stale entry expire.
+    """
     while not stop_event.is_set():
         if not token_holder.get("token"):
-            tok = register_to_bridge(wrapper_id, name, cwd, port, pid)
-            if tok:
-                token_holder["token"] = tok
-        if stop_event.wait(interval):
+            kind, tok = register_to_bridge(wrapper_id, name, cwd, port, pid)
+            if kind == "ok":
+                token_holder["token"] = tok or ""
+                wait = interval
+            elif kind == "conflict":
+                logging.warning("bridge 409 conflict on re-register, cooling down %.0fs", BRIDGE_CONFLICT_COOLDOWN)
+                wait = BRIDGE_CONFLICT_COOLDOWN
+            else:  # transport
+                wait = interval
+        else:
+            wait = interval
+        if stop_event.wait(wait):
             return
 
 
@@ -420,7 +451,11 @@ def main() -> None:
 
     # Try initial registration. If bridge is down, fall into standalone mode
     # (claude still hosts locally; registration_loop retries every 30s).
-    token = register_to_bridge(wrapper_id, wrapper_name, cwd, wrapper_port, wrapper_pid) or ""
+    kind, tok = register_to_bridge(wrapper_id, wrapper_name, cwd, wrapper_port, wrapper_pid)
+    if kind == "conflict":
+        sys.stderr.write(f"FATAL: wrapper id '{wrapper_id}' already registered\n")
+        sys.exit(3)
+    token = tok or ""
     token_holder = {"token": token}
     if not token:
         print("[wrapper] WARN bridge offline, running standalone (will retry every 30s)", flush=True)
