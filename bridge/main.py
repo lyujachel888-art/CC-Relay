@@ -45,7 +45,7 @@ _loading_thread.join(timeout=1)
 print(f"加载耗时: {time.time() - _loading_start:.1f}s\n", file=sys.stderr, flush=True)
 
 
-__version__ = "0.2.12"
+__version__ = "0.2.13"
 __author__ = "jachel.lyu"
 _BANNER = f"CC Relay v{__version__} — Claude Code ↔ 飞书 多云匣渡桥"
 

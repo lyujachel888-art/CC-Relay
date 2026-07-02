@@ -17,10 +17,18 @@ if (-not $env:CLAUDE_CWD) {
 }
 
 $WrapperDir = Join-Path (Split-Path -Parent $PSScriptRoot) "wrapper"
-Set-Location $WrapperDir
 
 $ArgList = @()
 if ($Id)   { $ArgList += @("--id", $Id) }
 if ($Name) { $ArgList += @("--name", $Name) }
 
-python wrapper.py @ArgList
+# Push into the wrapper dir to run wrapper.py, but restore the caller's
+# location on exit. Otherwise the shim (which invokes this script via `&`
+# in the caller's runspace) leaves the user's shell sitting in
+# ...\<version>\wrapper after claude quits, instead of the project dir.
+Push-Location $WrapperDir
+try {
+    python wrapper.py @ArgList
+} finally {
+    Pop-Location
+}
